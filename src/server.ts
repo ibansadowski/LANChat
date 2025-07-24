@@ -2,6 +2,16 @@ import { Hono } from "hono";
 import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import os from "node:os";
+import { Honcho } from "@honcho-ai/sdk";
+
+const honcho = new Honcho({
+  environment: "production",
+  apiKey: process.env.HONCHO_API_KEY!,
+  workspaceId: process.env.HONCHO_WORKSPACE_ID!,
+});
+
+const session = honcho.session(`groupchat-${Date.now()}`);
+console.log("🎯 Honcho session created:", session.id);
 
 // Types
 interface User {
@@ -119,7 +129,7 @@ io.on("connection", (socket) => {
 
   socket.on(
     "register",
-    (data: { username: string; type?: string; capabilities?: string[] }) => {
+    async (data: { username: string; type?: string; capabilities?: string[] }) => {
       const { username, type = "human" } = data;
 
       if (type === "agent") {
@@ -131,6 +141,9 @@ io.on("connection", (socket) => {
           socket,
         };
         agents.set(socket.id, agent);
+        // add agent to honcho session
+        const agent_peer = honcho.peer(username, { config: { observe_me: true, observe_others: true } });
+        await session.addPeers([agent_peer]);
         console.log(`Agent registered: ${username}`);
       } else {
         const user: User = {
@@ -140,6 +153,9 @@ io.on("connection", (socket) => {
           socket,
         };
         connectedUsers.set(socket.id, user);
+        // add user to honcho session
+        const user_peer = honcho.peer(username, { config: { observe_me: true, observe_others: true } });
+        await session.addPeers([user_peer]);
         console.log(`User registered: ${username}`);
       }
 
@@ -162,7 +178,7 @@ io.on("connection", (socket) => {
     },
   );
 
-  socket.on("chat", (data: { content: string; metadata?: any }) => {
+  socket.on("chat", async (data: { content: string; metadata?: any }) => {
     const user = connectedUsers.get(socket.id) || agents.get(socket.id);
     if (!user) return;
 
@@ -178,12 +194,12 @@ io.on("connection", (socket) => {
       },
     });
 
-    broadcastMessage(message);
+    await broadcastMessage(message);
     addToHistory(message);
     notifyAgents(message, "chat_message");
   });
 
-  socket.on("agent_data", (data: any) => {
+  socket.on("agent_data", async (data: any) => {
     const agent = agents.get(socket.id);
     if (!agent) return;
 
@@ -201,7 +217,7 @@ io.on("connection", (socket) => {
     });
 
     if (data.broadcast) {
-      broadcastMessage(message);
+      await broadcastMessage(message);
       addToHistory(message);
     } else if (data.targets) {
       data.targets.forEach((targetId: string) => {
@@ -216,7 +232,7 @@ io.on("connection", (socket) => {
     notifyAgents(message, "agent_data", [socket.id]);
   });
 
-  socket.on("agent_response", (data: any) => {
+  socket.on("agent_response", async (data: any) => {
     const agent = agents.get(socket.id);
     if (!agent) return;
 
@@ -233,11 +249,11 @@ io.on("connection", (socket) => {
       },
     });
 
-    broadcastMessage(message);
+    await broadcastMessage(message);
     addToHistory(message);
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     const user = connectedUsers.get(socket.id) || agents.get(socket.id);
     if (user) {
       const leaveMessage = createMessage({
@@ -255,6 +271,9 @@ io.on("connection", (socket) => {
 
       connectedUsers.delete(socket.id);
       agents.delete(socket.id);
+      // remove user/agent from honcho session
+      const peer = honcho.peer(user.username);
+      await session.removePeers([peer]);
       console.log(`${user.type} disconnected:`, user.username);
     }
   });
@@ -307,9 +326,12 @@ io.on("connection", (socket) => {
 });
 
 // Helper functions
-function broadcastMessage(message: Message): void {
+async function broadcastMessage(message: Message): Promise<void> {
   // Broadcast to Socket.io clients
   io.emit("message", message);
+  // add message to honcho session
+  const peer = honcho.peer(message.username);
+  await session.addMessages([peer.message(message.content)]);
 }
 
 function createMessage({
