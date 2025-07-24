@@ -285,7 +285,15 @@ JSON response:`,
 		query: string;
 	}): Promise<PsychologyAnalysis> {
 		const my_peer = honcho.peer(this.agentName);
-		const response = await my_peer.chat(args.query, { sessionId: this.sessionId || undefined, target: args.participantName });
+		const response = await my_peer.chat(args.query, {
+			sessionId: this.sessionId || undefined,
+			target: args.participantName,
+		});
+
+		console.log("============== ANALYSIS ==============");
+		console.log("Query: ", args.query);
+		console.log(response);
+		console.log("============== ANALYSIS COMPLETE ==============");
 
 		if (response === null) {
 			return {
