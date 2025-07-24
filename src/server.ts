@@ -162,6 +162,9 @@ io.on("connection", (socket) => {
       // Send recent chat history
       socket.emit("history", chatHistory.slice(-50));
 
+      // Send session id
+      socket.emit("session_id", session.id);
+
       // Notify others
       const joinMessage = createMessage({
         type: MessageType.JOIN,

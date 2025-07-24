@@ -2,10 +2,17 @@
 
 import { io, type Socket } from "socket.io-client";
 import { Ollama } from "ollama";
+import { Honcho } from "@honcho-ai/sdk";
 
 // Configuration
 const SERVER_URL = Bun.env.CHAT_SERVER || "http://localhost:3000";
 const AGENT_NAME = process.argv[2] || "Assistant";
+
+const honcho = new Honcho({
+	environment: "production",
+	apiKey: process.env.HONCHO_API_KEY!,
+	workspaceId: process.env.HONCHO_WORKSPACE_ID!,
+});
 
 interface Message {
 	id: string;
@@ -26,10 +33,7 @@ interface ResponseDecision {
 
 interface PsychologyAnalysis {
 	participant: string;
-	mood: string;
-	communication_style: string;
-	key_interests: string[];
-	suggested_approach: string;
+	response: string;
 }
 
 class ChatAgent {
@@ -40,6 +44,7 @@ class ChatAgent {
 	protected systemPrompt: string;
 	protected temperature: number = 0.7;
 	protected responseLength: number = 100;
+	protected sessionId: string | null = null;
 
 	constructor(agentName: string, systemPrompt?: string) {
 		this.agentName = agentName;
@@ -85,6 +90,11 @@ Respond naturally and conversationally. Keep responses concise.`;
 			if (message.type === "chat" && message.username !== this.agentName) {
 				await this.processMessage(message);
 			}
+		});
+
+		// Receive session id from server
+		this.socket.on("session_id", (sessionId: string) => {
+			this.sessionId = sessionId;
 		});
 
 		// Receive initial history
@@ -274,12 +284,18 @@ JSON response:`,
 		participantName: string;
 		query: string;
 	}): Promise<PsychologyAnalysis> {
+		const my_peer = honcho.peer(this.agentName);
+		const response = await my_peer.chat(args.query, { sessionId: this.sessionId || undefined, target: args.participantName });
+
+		if (response === null) {
+			return {
+				participant: args.participantName,
+				response: `No information found for query: ${args.query}`,
+			};
+		}
 		return {
 			participant: args.participantName,
-			mood: "neutral",
-			communication_style: "standard",
-			key_interests: [],
-			suggested_approach: `Unable to analyze for query: ${args.query}`,
+			response: response,
 		};
 	}
 }
