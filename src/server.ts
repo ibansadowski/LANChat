@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { createServer } from "node:http";
-import { createServer as createTCPServer } from "node:net";
 import { Server as SocketIOServer } from "socket.io";
 import os from "node:os";
 
@@ -8,7 +7,7 @@ import os from "node:os";
 interface User {
   id: string;
   username: string;
-  type: "human" | "raw";
+  type: "human";
   socket?: any;
 }
 
@@ -18,12 +17,6 @@ interface Agent {
   type: "agent";
   capabilities: string[];
   socket: any;
-}
-
-interface RawClient {
-  username: string;
-  socket: any;
-  type: "raw";
 }
 
 interface Message {
@@ -57,7 +50,6 @@ enum MessageType {
 const connectedUsers = new Map<string, User>();
 const chatHistory: Message[] = [];
 const agents = new Map<string, Agent>();
-const rawClients = new Map<any, RawClient>();
 
 // Create Hono app for API routes
 const app = new Hono();
@@ -67,7 +59,6 @@ app.get("/api/stats", (c) => {
   return c.json({
     connectedUsers: connectedUsers.size,
     connectedAgents: agents.size,
-    rawClients: rawClients.size,
     totalMessages: chatHistory.length,
     uptime: process.uptime(),
   });
@@ -85,7 +76,6 @@ app.get("/api/network", (c) => {
     interfaces: getLocalIPs(),
     ports: {
       socketio: PORT,
-      tcp: RAW_PORT,
     },
   });
 });
@@ -299,9 +289,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("get_users", (callback: Function) => {
-    const agent = agents.get(socket.id);
-    if (!agent) return callback({ error: "Unauthorized" });
-
     const users = Array.from(connectedUsers.values()).map((user) => ({
       id: user.id,
       username: user.username,
@@ -319,189 +306,10 @@ io.on("connection", (socket) => {
   });
 });
 
-// Raw TCP server for netcat/telnet clients
-const rawServer = createTCPServer((socket) => {
-  let username: string | null = null;
-  let authenticated = false;
-
-  socket.write("\r\n=== LAN Chat Server ===\r\n");
-  socket.write("Enter your username: ");
-
-  socket.on("data", (data) => {
-    const input = data.toString().trim();
-
-    if (!authenticated) {
-      if (input.length > 0) {
-        username = input.replace(/[^\w\s-]/g, "").substring(0, 20);
-        authenticated = true;
-
-        const client: RawClient = {
-          username,
-          socket,
-          type: "raw",
-        };
-        rawClients.set(socket, client);
-
-        socket.write(
-          `\r\nWelcome ${username}! You're now connected to the chat.\r\n`,
-        );
-        socket.write("Type /help for commands or just start chatting.\r\n\r\n");
-
-        // Send recent history
-        const recentHistory = chatHistory.slice(-10);
-        if (recentHistory.length > 0) {
-          socket.write("--- Recent Messages ---\r\n");
-          recentHistory.forEach((msg) => {
-            socket.write(formatMessageForRaw(msg) + "\r\n");
-          });
-          socket.write("--- End History ---\r\n\r\n");
-        }
-
-        // Notify others
-        const joinMessage = createMessage({
-          type: MessageType.JOIN,
-          username: "System",
-          content: `${username} (netcat) joined the chat`,
-          metadata: {
-            joinedUser: username,
-            userType: "raw",
-          },
-        });
-
-        broadcastMessage(joinMessage);
-        addToHistory(joinMessage);
-      }
-      return;
-    }
-
-    // Handle commands and messages
-    if (input.startsWith("/")) {
-      handleRawCommand(socket, input);
-    } else if (input.length > 0) {
-      const message = createMessage({
-        type: MessageType.CHAT,
-        username: username!,
-        content: input,
-        metadata: {
-          clientType: "raw",
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      broadcastMessage(message);
-      addToHistory(message);
-      notifyAgents(message, "chat_message");
-    }
-  });
-
-  socket.on("close", () => {
-    const client = rawClients.get(socket);
-    if (client) {
-      const leaveMessage = createMessage({
-        type: MessageType.LEAVE,
-        username: "System",
-        content: `${client.username} (netcat) left the chat`,
-        metadata: {
-          leftUser: client.username,
-          userType: "raw",
-        },
-      });
-
-      broadcastMessage(leaveMessage, socket);
-      addToHistory(leaveMessage);
-      rawClients.delete(socket);
-      console.log(`Raw client disconnected: ${client.username}`);
-    }
-  });
-
-  socket.on("error", (err: Error) => {
-    console.log("Raw client error:", err.message);
-  });
-});
-
 // Helper functions
-function handleRawCommand(socket: any, command: string): void {
-  const client = rawClients.get(socket);
-  if (!client) return;
-
-  const parts = command.split(" ");
-  const cmd = parts[0].toLowerCase();
-
-  switch (cmd) {
-    case "/help":
-      socket.write("\r\n--- Available Commands ---\r\n");
-      socket.write("/help     - Show this help\r\n");
-      socket.write("/users    - List connected users\r\n");
-      socket.write("/history  - Show recent messages\r\n");
-      socket.write("/quit     - Exit chat\r\n");
-      socket.write("Type any message to send it.\r\n\r\n");
-      break;
-    case "/users":
-      socket.write("\r\n--- Connected Users ---\r\n");
-      connectedUsers.forEach((user) => {
-        socket.write(`  ${user.username} (${user.type})\r\n`);
-      });
-      rawClients.forEach((client) => {
-        socket.write(`  ${client.username} (netcat)\r\n`);
-      });
-      socket.write("--- Connected Agents ---\r\n");
-      agents.forEach((agent) => {
-        const caps =
-          agent.capabilities.length > 0
-            ? ` [${agent.capabilities.join(", ")}]`
-            : "";
-        socket.write(`  ${agent.username} (agent)${caps}\r\n`);
-      });
-      socket.write("\r\n");
-      break;
-    case "/history":
-      socket.write("\r\n--- Recent Messages ---\r\n");
-      chatHistory.slice(-20).forEach((msg) => {
-        socket.write(formatMessageForRaw(msg) + "\r\n");
-      });
-      socket.write("--- End History ---\r\n\r\n");
-      break;
-    case "/quit":
-      socket.write("Goodbye!\r\n");
-      socket.end();
-      break;
-    default:
-      socket.write(
-        `Unknown command: ${cmd}. Type /help for available commands.\r\n`,
-      );
-  }
-}
-
-function formatMessageForRaw(message: Message): string {
-  const time = new Date(message.metadata.timestamp).toLocaleTimeString();
-
-  switch (message.type) {
-    case MessageType.CHAT:
-      return `[${time}] ${message.username}: ${message.content}`;
-    case MessageType.AGENT_RESPONSE:
-      const confidence = message.metadata.confidence
-        ? ` (${Math.round(message.metadata.confidence * 100)}%)`
-        : "";
-      return `[${time}] 🤖 ${message.username}${confidence}: ${message.content}`;
-    case MessageType.SYSTEM:
-    case MessageType.JOIN:
-    case MessageType.LEAVE:
-      return `[${time}] * ${message.content}`;
-    default:
-      return `[${time}] ${message.username}: ${message.content}`;
-  }
-}
-
-function broadcastMessage(message: Message, excludeSocket?: any): void {
+function broadcastMessage(message: Message): void {
   // Broadcast to Socket.io clients
   io.emit("message", message);
-
-  // Broadcast to raw clients
-  rawClients.forEach((client, socket) => {
-    if (socket !== excludeSocket) {
-      socket.write(formatMessageForRaw(message) + "\r\n");
-    }
-  });
 }
 
 function createMessage({
@@ -594,25 +402,22 @@ function displayStartupInfo(): void {
 
   // Display available IPs
   console.log("📡 Available Connection Points:");
-  console.log(`   Socket.io: Port ${PORT}`);
-  console.log(`   Raw TCP:   Port ${RAW_PORT}\n`);
+  console.log(`   Socket.io: Port ${PORT}\n`);
 
   if (ips.length === 0) {
     console.log(
       "⚠️  No network interfaces found. Server only accessible via localhost.",
     );
     console.log("   Local connections:");
-    console.log(`   • nc localhost ${RAW_PORT}`);
-    console.log(`   • telnet localhost ${RAW_PORT}\n`);
+    console.log(`   • Socket.io client on http://localhost:${PORT}\n`);
     return;
   }
 
-  console.log("🌐 LAN Connection Commands:");
+  console.log("🌐 LAN Connection Points:");
   ips.forEach((ip) => {
     const primary = ip.primary ? " (primary)" : "";
     console.log(`   Interface: ${ip.interface}${primary}`);
-    console.log(`   • nc ${ip.address} ${RAW_PORT}`);
-    console.log(`   • telnet ${ip.address} ${RAW_PORT}`);
+    console.log(`   • Socket.io: http://${ip.address}:${PORT}`);
     console.log("");
   });
 
@@ -625,69 +430,64 @@ function displayStartupInfo(): void {
       );
       console.log("   Or run: sudo pfctl -f /etc/pf.conf");
       console.log(
-        `   Allow incoming connections on ports ${PORT} and ${RAW_PORT}`,
+        `   Allow incoming connections on port ${PORT}`,
       );
       break;
     case "linux":
       console.log("   Ubuntu/Debian:");
-      console.log(`   sudo ufw allow ${PORT}:${RAW_PORT}/tcp`);
+      console.log(`   sudo ufw allow ${PORT}/tcp`);
       console.log("   ");
       console.log("   CentOS/RHEL:");
       console.log(
-        `   sudo firewall-cmd --add-port=${PORT}-${RAW_PORT}/tcp --permanent`,
+        `   sudo firewall-cmd --add-port=${PORT}/tcp --permanent`,
       );
       console.log("   sudo firewall-cmd --reload");
       break;
     case "win32":
       console.log("   Windows: Windows Defender Firewall > Advanced Settings");
       console.log("   Create Inbound Rule > Port > TCP > Specific Ports");
-      console.log(`   Enter: ${PORT},${RAW_PORT}`);
+      console.log(`   Enter: ${PORT}`);
       break;
     default:
       console.log(
-        `   Configure firewall to allow ports ${PORT} and ${RAW_PORT}`,
+        `   Configure firewall to allow port ${PORT}`,
       );
   }
 
   console.log("\n🧪 Test Your Setup:");
   console.log("   1. Try locally first:");
-  console.log(`      nc localhost ${RAW_PORT}`);
+  console.log(`      Open http://localhost:${PORT} in browser or connect with Socket.io client`);
   console.log("   2. Test from another machine:");
   if (ips.length > 0) {
     const primaryIP = ips.find((ip) => ip.primary) || ips[0];
-    console.log(`      nc ${primaryIP.address} ${RAW_PORT}`);
+    console.log(`      http://${primaryIP?.address}:${PORT}`);
   }
-  console.log("   3. Check if ports are open:");
-  console.log(`      netstat -ln | grep ${RAW_PORT}`);
+  console.log("   3. Check if port is open:");
+  console.log(`      netstat -ln | grep ${PORT}`);
 
   console.log("\n📊 Server Status:");
   console.log(`   Stats API: http://localhost:${PORT}/api/stats`);
   console.log(`   Network API: http://localhost:${PORT}/api/network`);
   if (ips.length > 0) {
     const primaryIP = ips.find((ip) => ip.primary) || ips[0];
-    console.log(`              http://${primaryIP.address}:${PORT}/api/stats`);
+    console.log(`              http://${primaryIP?.address}:${PORT}/api/stats`);
   }
 
   console.log("\n💡 Troubleshooting:");
   console.log("   • Can't connect? Check firewall settings above");
   console.log("   • Wrong IP? Try all listed IPs");
   console.log("   • Still issues? Test with localhost first");
-  console.log("   • Port in use? Set RAW_PORT=3002 environment variable");
+  console.log("   • Port in use? Set PORT environment variable to different port");
 
-  console.log("\n🎉 Ready for connections!\n");
+  console.log("\n🎉 Ready for Socket.io connections!\n");
 }
 
 // Configuration
 const PORT = parseInt(Bun.env.PORT || "3000");
-const RAW_PORT = parseInt(Bun.env.RAW_PORT || "3001");
 
-// Start servers
+// Start server
 server.listen(PORT, () => {
   console.log(`HTTP/Socket.io server listening on port ${PORT}`);
-});
-
-rawServer.listen(RAW_PORT, () => {
-  // Both servers ready - show startup info
   displayStartupInfo();
 });
 

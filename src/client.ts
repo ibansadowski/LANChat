@@ -41,7 +41,6 @@ class TerminalChatClient {
 	private username: string;
 	private socket: Socket | null = null;
 	private rl: readline.Interface | null = null;
-	private connected: boolean = false;
 
 	constructor(serverUrl: string, username: string) {
 		this.serverUrl = serverUrl;
@@ -56,7 +55,6 @@ class TerminalChatClient {
 		this.socket = io(this.serverUrl);
 
 		this.socket.on("connect", () => {
-			this.connected = true;
 			console.log(chalk.green("Connected to chat server!"));
 
 			// Register with server
@@ -69,7 +67,6 @@ class TerminalChatClient {
 		});
 
 		this.socket.on("disconnect", () => {
-			this.connected = false;
 			console.log(chalk.red("Disconnected from server"));
 			if (this.rl) {
 				this.rl.close();
@@ -82,9 +79,15 @@ class TerminalChatClient {
 		});
 
 		this.socket.on("history", (history: Message[]) => {
-			console.log(chalk.yellow("\n--- Chat History ---"));
-			history.forEach((msg) => this.displayMessage(msg, false));
-			console.log(chalk.yellow("--- End History ---\n"));
+			this.pausePrompt();
+			if (history.length === 0) {
+				console.log(chalk.yellow("--- No chat history yet ---"));
+			} else {
+				console.log(chalk.yellow("--- Chat History ---"));
+				history.forEach((msg) => this.displayMessage(msg, false));
+				console.log(chalk.yellow("--- End History ---"));
+			}
+			this.resumePrompt();
 		});
 
 		this.socket.on("connect_error", (error: Error) => {
@@ -98,12 +101,18 @@ class TerminalChatClient {
 			input: process.stdin,
 			output: process.stdout,
 			prompt: chalk.blue(`${this.username}> `),
+			terminal: true,
 		});
 
 		this.rl.prompt();
 
 		this.rl.on("line", (input: string) => {
 			const trimmed = input.trim();
+
+			// Move cursor up one line and clear it (removes the input line)
+			process.stdout.write('\u001b[1A'); // Move cursor up one line
+			readline.clearLine(process.stdout, 0); // Clear the line
+			readline.cursorTo(process.stdout, 0); // Move cursor to start
 
 			if (trimmed === "") {
 				this.rl!.prompt();
@@ -140,7 +149,7 @@ class TerminalChatClient {
 
 	private handleCommand(command: string): void {
 		const parts = command.split(" ");
-		const cmd = parts[0].toLowerCase();
+		const cmd = parts[0]?.toLowerCase();
 
 		switch (cmd) {
 			case "/help":
@@ -153,11 +162,12 @@ class TerminalChatClient {
 			case "/users":
 				this.socket!.emit("get_users", (response: UsersResponse) => {
 					if (response.error) {
-						console.log(chalk.red("Error:", response.error));
+						this.printWithoutPrompt(chalk.red("Error: " + response.error));
 					} else {
+						this.pausePrompt();
 						console.log(chalk.cyan("\n--- Connected Users ---"));
 						response.users.forEach((user) => {
-							console.log(chalk.white(`  ${user.username} (${user.type})`));
+							console.log(chalk.gray(`  ${user.username} (${user.type})`));
 						});
 						console.log(chalk.cyan("--- Connected Agents ---"));
 						response.agents.forEach((agent) => {
@@ -170,18 +180,20 @@ class TerminalChatClient {
 							);
 						});
 						console.log("");
+						this.resumePrompt();
 					}
 				});
 				break;
 			case "/history":
-				const limit = parseInt(parts[1]) || 20;
+				const limit = parseInt(parts[1] ?? "20");
 				this.socket!.emit(
 					"get_history",
 					{ limit },
 					(response: HistoryResponse) => {
 						if (response.error) {
-							console.log(chalk.red("Error:", response.error));
+							this.printWithoutPrompt(chalk.red("Error: " + response.error));
 						} else {
+							this.pausePrompt();
 							console.log(
 								chalk.yellow(
 									`\n--- Last ${response.history.length} Messages ---`,
@@ -191,12 +203,13 @@ class TerminalChatClient {
 								this.displayMessage(msg, false),
 							);
 							console.log(chalk.yellow("--- End History ---\n"));
+							this.resumePrompt();
 						}
 					},
 				);
 				break;
 			default:
-				console.log(
+				this.printWithoutPrompt(
 					chalk.red(
 						`Unknown command: ${cmd}. Type /help for available commands.`,
 					),
@@ -205,35 +218,30 @@ class TerminalChatClient {
 	}
 
 	private showHelp(): void {
+		this.pausePrompt();
 		console.log(chalk.cyan("\n--- Available Commands ---"));
-		console.log(chalk.white("/help     - Show this help message"));
-		console.log(chalk.white("/users    - List connected users and agents"));
+		console.log(chalk.gray("/help     - Show this help message"));
+		console.log(chalk.gray("/users    - List connected users and agents"));
 		console.log(
-			chalk.white("/history [n] - Show last n messages (default: 20)"),
+			chalk.gray("/history [n] - Show last n messages (default: 20)"),
 		);
-		console.log(chalk.white("/quit     - Exit the chat"));
-		console.log(chalk.white("Type any message to send it to the chat."));
+		console.log(chalk.gray("/quit     - Exit the chat"));
+		console.log(chalk.gray("Type any message to send it to the chat."));
 		console.log("");
+		this.resumePrompt();
 	}
 
 	private displayMessage(message: Message, showPrompt: boolean = true): void {
-		if (showPrompt) {
-			// Clear current line and move cursor up
-			readline.clearLine(process.stdout, 0);
-			readline.cursorTo(process.stdout, 0);
-		}
-
 		const timestamp = new Date(message.metadata.timestamp).toLocaleTimeString();
+		let messageText = "";
 
 		switch (message.type) {
 			case "chat":
 				if (message.username === this.username) {
-					console.log(chalk.green(`[${timestamp}] You: ${message.content}`));
+					messageText = chalk.yellow(`[${timestamp}] ${message.username}: ${message.content}`);
 				} else {
-					console.log(
-						chalk.white(
-							`[${timestamp}] ${message.username}: ${message.content}`,
-						),
+					messageText = chalk.green(
+						`[${timestamp}] ${message.username}: ${message.content}`,
 					);
 				}
 				break;
@@ -241,31 +249,59 @@ class TerminalChatClient {
 				const confidence = message.metadata.confidence
 					? ` (${Math.round(message.metadata.confidence * 100)}%)`
 					: "";
-				console.log(
-					chalk.magenta(
-						`[${timestamp}] 🤖 ${message.username}${confidence}: ${message.content}`,
-					),
+				messageText = chalk.magenta(
+					`[${timestamp}] 🤖 ${message.username}${confidence}: ${message.content}`,
 				);
 				break;
 			case "system":
 			case "join":
 			case "leave":
-				console.log(chalk.gray(`[${timestamp}] * ${message.content}`));
+				messageText = chalk.gray(`[${timestamp}] * ${message.content}`);
 				break;
 			case "agent_data":
 				if (message.metadata.broadcast !== false) {
-					console.log(
-						chalk.cyan(
-							`[${timestamp}] 📊 ${message.username}: ${message.content || "Data processed"}`,
-						),
+					messageText = chalk.cyan(
+						`[${timestamp}] 📊 ${message.username}: ${message.content || "Data processed"}`,
 					);
 				}
 				break;
 		}
 
-		if (showPrompt && this.rl) {
+		if (messageText) {
+			if (showPrompt) {
+				this.printWithoutPrompt(messageText);
+			} else {
+				console.log(messageText);
+			}
+		}
+	}
+
+	/**
+	 * Pauses the readline interface and clears the current prompt line
+	 */
+	private pausePrompt(): void {
+		if (this.rl) {
+			readline.clearLine(process.stdout, 0);
+			readline.cursorTo(process.stdout, 0);
+		}
+	}
+
+	/**
+	 * Resumes the readline interface and shows the prompt
+	 */
+	private resumePrompt(): void {
+		if (this.rl) {
 			this.rl.prompt();
 		}
+	}
+
+	/**
+	 * Prints content without interfering with the readline prompt
+	 */
+	private printWithoutPrompt(content: string): void {
+		this.pausePrompt();
+		console.log(content);
+		this.resumePrompt();
 	}
 }
 
@@ -279,7 +315,7 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 }
 
 const serverArg = process.argv.find((arg) => arg.startsWith("--server="));
-const serverUrl = serverArg ? serverArg.split("=")[1] : SERVER_URL;
+const serverUrl = serverArg ? serverArg.split("=")[1] ?? SERVER_URL : SERVER_URL;
 
 const client = new TerminalChatClient(serverUrl, USERNAME);
 client.connect().catch(console.error);

@@ -5,11 +5,10 @@ A real-time chat application built with **Bun**, **TypeScript**, and **Hono**, d
 ## Features
 
 - **Modern Stack**: Built with Bun, TypeScript, and Hono for optimal performance
-- **Multi-protocol support**: Users can connect via Socket.io client OR standard Unix tools (nc, telnet)
 - **AI Agent Integration**: Bots can join as agents with special capabilities
 - **Structured Messaging**: Rich message protocol supporting different message types
 - **Chat History**: Persistent message history with API access
-- **Real-time Communication**: Instant message delivery via WebSockets and TCP
+- **Real-time Communication**: Instant message delivery via WebSockets
 - **Agent Data Processing**: Agents can send/receive structured data for background processing
 - **No Dependencies for Users**: LAN users can join with tools already on their system
 - **Automatic Network Detection**: Server detects available IPs and provides connection guidance
@@ -43,21 +42,7 @@ The server will show you exactly which IPs to use! Example output:
    • telnet 192.168.1.105 3001
 ```
 
-**Connection Methods:**
-
-**Option A: Using netcat (most common)**
-
-```bash
-nc 192.168.1.105 3001
-```
-
-**Option B: Using telnet**
-
-```bash
-telnet 192.168.1.105 3001
-```
-
-**Option C: Using the TypeScript terminal client**
+**Connect using the TypeScript terminal client**
 
 ```bash
 # Connect with default username
@@ -78,35 +63,6 @@ bun run src/agent.ts
 
 # Start with custom agent name
 bun run src/agent.ts SmartBot
-```
-
-## Connection Methods
-
-### Netcat (nc) - Recommended
-
-Most Unix systems have netcat installed. Users simply run:
-
-```bash
-nc <server-ip> 3001
-```
-
-### Telnet
-
-Available on most systems:
-
-```bash
-telnet <server-ip> 3001
-```
-
-### SSH Port Forwarding
-
-For secure connections over untrusted networks:
-
-```bash
-# Forward local port to remote chat server
-ssh -L 3001:localhost:3001 user@remote-host
-# Then connect locally
-nc localhost 3001
 ```
 
 ## Message Types
@@ -201,25 +157,6 @@ async getAIResponse(prompt, context = {}) {
     confidence: 0.9
   };
 }
-```
-
-## Network Configuration
-
-For LAN use:
-
-1. **Server Setup**: The server machine's firewall should allow ports 3000 and 3001
-2. **Find Server IP**: Run `ip addr` or `ifconfig` to get the server's LAN IP
-3. **Client Connection**: Users connect with `nc <server-ip> 3001`
-4. **Test Locally First**: Try `nc localhost 3001` to verify the server works
-
-**Example LAN Setup:**
-
-```bash
-# On server machine (192.168.1.100):
-bun start
-
-# On any LAN machine:
-nc 192.168.1.100 3001
 ```
 
 ## Terminal Commands
