@@ -280,9 +280,6 @@ io.on("connection", (socket) => {
 
   // API endpoints for agents
   socket.on("get_history", (data: any, callback: Function) => {
-    const agent = agents.get(socket.id);
-    if (!agent) return callback({ error: "Unauthorized" });
-
     const limit = data.limit || 100;
     const messageType = data.messageType;
     const since = data.since ? new Date(data.since) : null;
@@ -322,6 +319,16 @@ io.on("connection", (socket) => {
     }));
 
     callback({ users, agents: agentList });
+  });
+
+  socket.on("dialectic", async (data: { user: string, query: string }, callback: Function) => {
+    const peer = honcho.peer(data.user);
+    const response = await peer.chat(data.query, { sessionId: session.id });
+    if (response === null) {
+      callback("No response from agent");
+    } else {
+      callback(response);
+    }
   });
 });
 

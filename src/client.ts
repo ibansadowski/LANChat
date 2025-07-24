@@ -208,6 +208,20 @@ class TerminalChatClient {
 					},
 				);
 				break;
+			case "/dialectic":
+				const query = parts.slice(2).join(" ");
+				this.socket!.emit("dialectic", { user: parts[1], query }, (response: string) => {
+					this.pausePrompt();
+					console.log(
+						chalk.yellow(
+							`\n--- Dialectic Chat Output ---`,
+						),
+					);
+					console.log(chalk.yellow(response));
+					console.log(chalk.yellow("--- End Dialectic Output ---\n"));
+					this.resumePrompt();
+				});
+				break;
 			default:
 				this.printWithoutPrompt(
 					chalk.red(
