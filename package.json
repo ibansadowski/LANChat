@@ -21,6 +21,7 @@
   "dependencies": {
     "chalk": "^5.4.1",
     "hono": "^4.8.5",
+    "ollama": "^0.5.16",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   }
