@@ -13,7 +13,14 @@ export enum MessageType {
 // Core message interface
 export interface Message {
   id: string;
-  type: MessageType | "chat" | "agent_response" | "system" | "join" | "leave" | "agent_data";
+  type:
+  | MessageType
+  | "chat"
+  | "agent_response"
+  | "system"
+  | "join"
+  | "leave"
+  | "agent_data";
   username: string;
   content: string;
   metadata: {
@@ -78,7 +85,23 @@ export interface ResponseDecision {
   confidence: number;
 }
 
+export interface AgentDecision {
+  decision: string;
+  reason: string;
+  confidence: number;
+}
+
 export interface PsychologyAnalysis {
   participant: string;
   response: string;
 }
+
+export interface Dialectic {
+  target: string;
+  question: string;
+}
+
+export interface Search {
+  query: string;
+}
+
