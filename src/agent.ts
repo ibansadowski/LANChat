@@ -22,7 +22,6 @@ const honcho = new Honcho({
 class ChatAgent {
 	protected socket: Socket | null = null;
 	protected agentName: string;
-	protected messageHistory: Message[] = [];
 	protected ollama: Ollama;
 	protected systemPrompt: string;
 	protected temperature: number = 0.7;
@@ -78,14 +77,6 @@ Feel empowered to be chatty and ask follow-up questions.
 
 		// Listen to all messages
 		this.socket.on("message", async (message: Message) => {
-			// Add to history
-			this.messageHistory.push(message);
-
-			// Keep only last 20 messages
-			if (this.messageHistory.length > 20) {
-				this.messageHistory.shift();
-			}
-
 			// Only process chat messages from others
 			if (message.type === "chat" && message.username !== this.agentName) {
 				await this.processMessage(message);
@@ -95,14 +86,6 @@ Feel empowered to be chatty and ask follow-up questions.
 		// Receive session id from server
 		this.socket.on("session_id", (sessionId: string) => {
 			this.sessionId = sessionId;
-		});
-
-		// Receive initial history
-		this.socket.on("history", (history: Message[]) => {
-			this.messageHistory = history.slice(-20); // Keep last 20 messages
-			console.log(
-				`📜 Loaded ${this.messageHistory.length} historical messages`,
-			);
 		});
 	}
 
@@ -124,11 +107,8 @@ Feel empowered to be chatty and ask follow-up questions.
 	private async shouldRespond(message: Message): Promise<ResponseDecision> {
 		try {
 			// Build context for decision
-			const recentContext = this.messageHistory
-				.slice(-5)
-				.filter((m) => m.type === "chat")
-				.map((m) => `${m.username}: ${m.content}`)
-				.join("\n");
+			const context = await honcho.session(this.sessionId || "").getContext({ tokens: 5000 })
+			const recentContext = context.summary + "\n\n" + context.toOpenAI(this.agentName).slice(-5).join("\n")
 
 			const response = await this.ollama.generate({
 				model: "llama3.1:8b",
@@ -179,12 +159,12 @@ JSON response:`,
 	private async generateResponseWithTools(message: Message): Promise<void> {
 		try {
 			// Build conversation history
-			const conversationHistory = this.messageHistory
-				.filter((m) => m.type === "chat")
-				.map((m) => ({
-					role: m.username === this.agentName ? "assistant" : "user",
-					content: `${m.username}: ${m.content}`,
-				}));
+			const context = await honcho.session(this.sessionId || "").getContext({ tokens: 5000 })
+
+			const conversationHistory = [
+				{ role: "assistant", content: context.summary },
+				...context.toOpenAI(this.agentName)
+			]
 
 			// Define the psychology analysis tool
 			const analyzeParticipantTool = {
@@ -245,7 +225,7 @@ JSON response:`,
 				for (const tool of response.message.tool_calls) {
 					const functionToCall =
 						availableFunctions[
-							tool.function.name as keyof typeof availableFunctions
+						tool.function.name as keyof typeof availableFunctions
 						];
 					if (functionToCall) {
 						console.log(`Calling tool: ${tool.function.name}`);
