@@ -3,38 +3,11 @@
 import { io, Socket } from "socket.io-client";
 import readline from "node:readline";
 import chalk from "chalk";
+import type { Message, UsersResponse, HistoryResponse } from "./types.js";
 
 // Configuration
 const SERVER_URL = Bun.env.CHAT_SERVER || "http://localhost:3000";
 const USERNAME = process.argv[2] || `User${Math.floor(Math.random() * 1000)}`;
-
-interface Message {
-	id: string;
-	type: "chat" | "agent_response" | "system" | "join" | "leave" | "agent_data";
-	username: string;
-	content: string;
-	metadata: {
-		timestamp: string;
-		[key: string]: any;
-	};
-}
-
-interface UsersResponse {
-	users: Array<{ id: string; username: string; type: string }>;
-	agents: Array<{
-		id: string;
-		username: string;
-		type: string;
-		capabilities: string[];
-	}>;
-	error?: string;
-}
-
-interface HistoryResponse {
-	history: Message[];
-	total: number;
-	error?: string;
-}
 
 class TerminalChatClient {
 	private serverUrl: string;

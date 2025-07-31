@@ -35,9 +35,7 @@ teen.connect().catch(console.error);
 // Handle graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n✌️ aight ima head out... catch yall later");
-  if (teen.socket) {
-    teen.socket.disconnect();
-  }
+  teen.disconnect();
   process.exit(0);
 });
 

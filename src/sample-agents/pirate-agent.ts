@@ -34,9 +34,7 @@ pirate.connect().catch(console.error);
 // Handle graceful shutdown
 process.on("SIGINT", () => {
   console.log("\n🏴‍☠️ Arr! Time to drop anchor and head to port...");
-  if (pirate.socket) {
-    pirate.socket.disconnect();
-  }
+  pirate.disconnect();
   process.exit(0);
 });
 

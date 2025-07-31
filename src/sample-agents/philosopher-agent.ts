@@ -37,8 +37,6 @@ process.on("SIGINT", () => {
   console.log(
     "\n🤔 As Heraclitus said, 'No man ever steps in the same river twice.' Time to depart...",
   );
-  if (philosopher.socket) {
-    philosopher.socket.disconnect();
-  }
+  philosopher.disconnect();
   process.exit(0);
 });

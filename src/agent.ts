@@ -3,6 +3,7 @@
 import { io, type Socket } from "socket.io-client";
 import { Ollama } from "ollama";
 import { Honcho } from "@honcho-ai/sdk";
+import type { Message, ResponseDecision, PsychologyAnalysis } from "./types.js";
 
 // Configuration
 const SERVER_URL = Bun.env.CHAT_SERVER || "http://localhost:3000";
@@ -13,28 +14,6 @@ const honcho = new Honcho({
 	apiKey: process.env.HONCHO_API_KEY!,
 	workspaceId: process.env.HONCHO_WORKSPACE_ID!,
 });
-
-interface Message {
-	id: string;
-	type: "chat" | "agent_response" | "system" | "join" | "leave" | "agent_data";
-	username: string;
-	content: string;
-	metadata: {
-		timestamp: string;
-		[key: string]: any;
-	};
-}
-
-interface ResponseDecision {
-	should_respond: boolean;
-	reason: string;
-	confidence: number;
-}
-
-interface PsychologyAnalysis {
-	participant: string;
-	response: string;
-}
 
 class ChatAgent {
 	protected socket: Socket | null = null;
@@ -241,10 +220,10 @@ JSON response:`,
 
 				// Process tool calls
 				for (const tool of response.message.tool_calls) {
-					const functionToCall = availableFunctions[tool.function.name];
+					const functionToCall = availableFunctions[tool.function.name as keyof typeof availableFunctions];
 					if (functionToCall) {
 						console.log(`Calling tool: ${tool.function.name}`);
-						const result = await functionToCall(tool.function.arguments);
+						const result = await functionToCall(tool.function.arguments as { participantName: string; query: string; });
 
 						// Add the tool response to messages
 						messages.push(response.message);
@@ -306,6 +285,12 @@ JSON response:`,
 			response: response,
 		};
 	}
+
+	disconnect(): void {
+		if (this.socket) {
+			this.socket.disconnect();
+		}
+	}
 }
 
 // Export the class for extension
@@ -324,9 +309,7 @@ if (import.meta.main) {
 	// Handle graceful shutdown
 	process.on("SIGINT", () => {
 		console.log("\n👋 Shutting down...");
-		if (agent.socket) {
-			agent.socket.disconnect();
-		}
+		agent.disconnect();
 		process.exit(0);
 	});
 }
