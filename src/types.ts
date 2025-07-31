@@ -55,7 +55,7 @@ export interface NetworkInterface {
 
 // API response types
 export interface UsersResponse {
-  users: Array<{ id: string; username: string; type: string }>;
+  users: Array<{ id: string; username: string; type: string; observe_me: boolean }>;
   agents: Array<{
     id: string;
     username: string;

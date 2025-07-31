@@ -171,7 +171,7 @@ export function setupSocketIO(
       const messageType = data.messageType;
       const since = data.since ? new Date(data.since) : null;
 
-      let filteredHistory = chatHistory.filter(msg => msg.type !== MessageType.JOIN && msg.type !== MessageType.LEAVE);
+      let filteredHistory = chatHistory.filter(msg => msg.type !== MessageType.JOIN && msg.type !== MessageType.LEAVE && msg.type !== MessageType.SYSTEM);
 
       if (messageType) {
         filteredHistory = filteredHistory.filter((msg) => msg.type === messageType);
@@ -192,6 +192,7 @@ export function setupSocketIO(
         id: user.id,
         username: user.username,
         type: user.type,
+        observe_me: user.observe_me,
       }));
 
       const agentList = Array.from(agents.values()).map((agent) => ({
