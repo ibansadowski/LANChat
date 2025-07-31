@@ -10,15 +10,20 @@ interface ChatHistoryProps {
 interface DisplayLine {
   text: string;
   color: string;
+  messageId: string;
 }
 
 export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages, currentUsername }) => {
   const { stdout } = useStdout();
-  const [scrollLineOffset, setScrollLineOffset] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
 
+  // Get terminal dimensions with safe defaults
+  const terminalWidth = Math.max(20, (stdout?.columns || 80) - 4); // Account for borders
+  const terminalHeight = Math.max(5, (stdout?.rows || 24) - 6); // Account for input area and borders
+
   /**
-   * Convert a message to formatted text with color
+   * Format a message into display text and color
    */
   const formatMessage = (message: Message): { text: string; color: string } | null => {
     let timestamp = new Date(message.metadata.timestamp).toLocaleTimeString();
@@ -55,7 +60,7 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages, currentUsern
             color: "cyan"
           };
         }
-        return null; // Hidden message
+        return null;
       default:
         return {
           text: `[${timestamp}] ${message.username}: ${message.content}`,
@@ -65,23 +70,47 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages, currentUsern
   };
 
   /**
-   * Break text into lines that fit within terminal width, padding each line to full width
+   * Wrap text to fit terminal width with proper word wrapping
    */
-  const breakIntoLines = (text: string, color: string): DisplayLine[] => {
-    const terminalWidth = (stdout.columns || 80) - 4; // Account for border and padding
-    const lines: DisplayLine[] = [];
+  const wrapText = (text: string, width: number): string[] => {
+    if (!text || width <= 0) return [''];
     
-    for (let i = 0; i < text.length; i += terminalWidth) {
-      const lineText = text.slice(i, i + terminalWidth);
-      // Pad the line to full width to clear any leftover characters
-      const paddedText = lineText.padEnd(terminalWidth, ' ');
-      lines.push({
-        text: paddedText,
-        color
-      });
+    const lines: string[] = [];
+    const words = text.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      // If adding this word would exceed width
+      if (currentLine.length + word.length + (currentLine ? 1 : 0) > width) {
+        // If current line has content, push it and start new line
+        if (currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          // Word is longer than width, break it
+          if (word.length > width) {
+            let remaining = word;
+            while (remaining.length > width) {
+              lines.push(remaining.slice(0, width));
+              remaining = remaining.slice(width);
+            }
+            currentLine = remaining;
+          } else {
+            currentLine = word;
+          }
+        }
+      } else {
+        // Add word to current line
+        currentLine = currentLine ? `${currentLine} ${word}` : word;
+      }
     }
-    
-    return lines.length > 0 ? lines : [{ text: ''.padEnd(terminalWidth, ' '), color }];
+
+    // Don't forget the last line
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    return lines.length > 0 ? lines : [''];
   };
 
   /**
@@ -93,59 +122,77 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages, currentUsern
     for (const message of messages) {
       const formatted = formatMessage(message);
       if (formatted) {
-        const messageLines = breakIntoLines(formatted.text, formatted.color);
-        lines.push(...messageLines);
+        const wrappedLines = wrapText(formatted.text, terminalWidth);
+        for (const line of wrappedLines) {
+          lines.push({
+            text: line,
+            color: formatted.color,
+            messageId: message.id
+          });
+        }
       }
     }
     
     return lines;
-  }, [messages, stdout.columns, currentUsername]);
-
-  const availableLines = Math.max(3, stdout.rows - 6); // Account for border and input area
+  }, [messages, terminalWidth, currentUsername]);
 
   /**
-   * Get visible lines based on scroll position, ensuring we never exceed available space
+   * Get visible lines based on current scroll position
    */
   const visibleLines = useMemo((): DisplayLine[] => {
-    const startIndex = Math.max(0, scrollLineOffset);
-    const endIndex = Math.min(displayLines.length, startIndex + availableLines);
+    const totalLines = displayLines.length;
+    const maxScrollOffset = Math.max(0, totalLines - terminalHeight);
+    const actualScrollOffset = Math.min(scrollOffset, maxScrollOffset);
+    
+    const startIndex = Math.max(0, totalLines - terminalHeight - actualScrollOffset);
+    const endIndex = totalLines - actualScrollOffset;
+    
     return displayLines.slice(startIndex, endIndex);
-  }, [displayLines, scrollLineOffset, availableLines]);
+  }, [displayLines, scrollOffset, terminalHeight]);
 
-  // Auto-scroll to show latest lines when new ones arrive
+  // Auto-scroll to bottom when new messages arrive (unless user is scrolling)
   useEffect(() => {
-    if (!isUserScrolling && displayLines.length > availableLines) {
-      setScrollLineOffset(Math.max(0, displayLines.length - availableLines));
+    if (!isUserScrolling) {
+      setScrollOffset(0);
     }
-  }, [displayLines.length, availableLines, isUserScrolling]);
+  }, [displayLines.length, isUserScrolling]);
 
-  // Handle arrow keys for scrolling by lines
+  // Handle arrow key input for scrolling
   useInput((input, key) => {
-    if (key.upArrow && scrollLineOffset > 0) {
+    const maxScrollOffset = Math.max(0, displayLines.length - terminalHeight);
+    
+    if (key.upArrow) {
       setIsUserScrolling(true);
-      setScrollLineOffset(prev => Math.max(0, prev - 1));
+      setScrollOffset(prev => Math.min(maxScrollOffset, prev + 1));
     } else if (key.downArrow) {
-      const maxOffset = Math.max(0, displayLines.length - availableLines);
-      const newOffset = Math.min(maxOffset, scrollLineOffset + 1);
-      setScrollLineOffset(newOffset);
-      // If we scrolled to the very bottom, resume auto-scroll
-      if (newOffset === maxOffset) {
+      const newOffset = Math.max(0, scrollOffset - 1);
+      setScrollOffset(newOffset);
+      
+      // If scrolled to bottom, resume auto-scroll
+      if (newOffset === 0) {
         setIsUserScrolling(false);
       }
     }
   });
 
   return (
-    <Box borderStyle="round" borderColor="blue" paddingX={1} paddingY={1} flexGrow={1}>
-      <Box flexDirection="column">
+    <Box 
+      borderStyle="round" 
+      borderColor="blue" 
+      paddingX={1} 
+      paddingY={0}
+      flexGrow={1}
+      height={terminalHeight + 2} // Account for borders
+    >
+      <Box flexDirection="column" width="100%">
         {visibleLines.length === 0 ? (
           <Text color="gray">No messages yet. Type something to start chatting!</Text>
         ) : (
-          visibleLines.map((line, index) => 
-            <Text key={`line-${scrollLineOffset + index}`} color={line.color}>
+          visibleLines.map((line, index) => (
+            <Text key={`${line.messageId}-${index}`} color={line.color}>
               {line.text}
             </Text>
-          )
+          ))
         )}
       </Box>
     </Box>
