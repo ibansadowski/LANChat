@@ -106,7 +106,7 @@ Feel empowered to be chatty and ask follow-up questions.
 			"\n\n" +
 			context.toOpenAI(this.agentName).slice(-5).join("\n");
 		// State 1: Decide if we should respond
-		const decision = await this.shouldRespond(recentContext);
+		const decision = await this.shouldRespond(message, recentContext);
 		console.log(
 			`🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason}`,
 		);
@@ -123,7 +123,7 @@ Feel empowered to be chatty and ask follow-up questions.
 	private async decideAction(
 		message: Message,
 		recentContext: string,
-		tracker: Object,
+		tracker: Record<string, any>,
 	): Promise<void> {
 		// analyze psychology
 		// search for additional context
@@ -172,7 +172,7 @@ JSON response:`,
 					message,
 					recentContext,
 				);
-				tracker["pyschology"] = psychologyResponse;
+				tracker["psychology"] = psychologyResponse;
 				this.decideAction(message, recentContext, tracker);
 			} else if (
 				decision.decision === "search" &&
@@ -192,11 +192,7 @@ JSON response:`,
 		} catch (error) {
 			console.error("Error in decision making:", error);
 			// Default to not responding on error
-			return {
-				should_respond: false,
-				reason: "Error in decision process",
-				confidence: 0.0,
-			};
+			return;
 		}
 	}
 
@@ -251,7 +247,7 @@ JSON response:`,
 		}
 	}
 
-	private async search(message: Message, recentContext: string): Promise<Any> {
+	private async search(message: Message, recentContext: string): Promise<any> {
 		try {
 			const response = await this.ollama.generate({
 				model: "llama3.1:8b",
@@ -280,7 +276,7 @@ JSON response:`,
 			const search = JSON.parse(response.response) as Search;
 
 			const semanticResponse = await honcho
-				.session(this.sessionId)
+				.session(this.sessionId || "")
 				.search(search.query);
 
 			return semanticResponse;
@@ -292,7 +288,7 @@ JSON response:`,
 	private async analyzePsychology(
 		message: Message,
 		recentContext: string,
-	): Promise<void> {
+	): Promise<any> {
 		try {
 			const response = await this.ollama.generate({
 				model: "llama3.1:8b",
@@ -324,9 +320,10 @@ JSON response:`,
 			const dialecticResponse = await honcho
 				.peer(this.agentName)
 				.chat(dialectic.question, {
-					sessionId: this.sessionId,
+					sessionId: this.sessionId || undefined,
 					target: dialectic.target,
 				});
+			return dialecticResponse;
 		} catch (error) {
 			console.error("Error generating response:", error);
 		}
@@ -335,7 +332,7 @@ JSON response:`,
 	private async generateResponse(
 		message: Message,
 		recentContext: string,
-		tracker: Object,
+		tracker: Record<string, any>,
 	): Promise<void> {
 		try {
 			console.log(`💭 Generating response...`);

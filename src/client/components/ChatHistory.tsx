@@ -9,7 +9,7 @@ interface ChatHistoryProps {
 }
 
 export const ChatHistory: React.FC<ChatHistoryProps> = ({ messages, currentUsername }) => {
-  const visibleMessages = messages.slice(-10); // Show last 10 messages
+  const visibleMessages = messages.slice(-5); // Show last 5 messages
 
   return (
     <Box borderStyle="round" borderColor="blue" paddingX={1} paddingY={1} flexGrow={1} height="100%">
