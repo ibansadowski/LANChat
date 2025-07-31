@@ -11,6 +11,8 @@ bun install
 # Run the chat server
 bun start                    # Production mode
 bun dev                      # Development mode with auto-restart
+bun start --session <session-id>  # Use existing Honcho session
+bun dev --session <session-id>    # Development mode with existing session
 
 # Run the terminal client
 bun run client               # Default username
@@ -58,7 +60,7 @@ Server (server.ts)
 Client Types:
 ├── Human Clients (client.ts)
 │   ├── Socket.IO client with rich terminal UI
-│   └── Commands: /help, /users, /history, /dialectic, /quit
+│   └── Commands: /help, /users, /history, /dialectic, /observe, /quit
 └── AI Agents (agent.ts + sample-agents/)
     ├── Ollama integration for LLM responses
     ├── Psychology analysis via Honcho

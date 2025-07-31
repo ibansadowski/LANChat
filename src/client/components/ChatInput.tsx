@@ -15,7 +15,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, getAutocompleteO
 
   const handleChange = (value: string) => {
     setCurrentInput(value);
-    const shouldShow = value.startsWith('/') && value.length > 1;
+    const shouldShow = value.startsWith('/') && value.length >= 1;
     setShowAutocomplete(shouldShow);
     if (shouldShow) {
       setAutocompleteOptions(getAutocompleteOptions(value));

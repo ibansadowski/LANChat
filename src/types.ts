@@ -28,6 +28,7 @@ export interface User {
   username: string;
   type: "human";
   socket?: any;
+  observe_me?: boolean;
 }
 
 export interface Agent {

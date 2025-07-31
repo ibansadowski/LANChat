@@ -1,5 +1,6 @@
 import { Server as SocketIOServer } from "socket.io";
 import { Honcho } from "@honcho-ai/sdk";
+import { Honcho as HonchoCore } from "@honcho-ai/core";
 import type { Message, User, Agent } from "../types.js";
 import { MessageType } from "../types.js";
 import { generateId, print } from "./utils.js";
@@ -27,20 +28,28 @@ export function setupSocketIO(
           socket,
         };
         agents.set(socket.id, agent);
-        const agent_peer = honcho.peer(username, { config: { observe_me: true, observe_others: true } });
-        await session.addPeers([agent_peer]);
+        const agent_peer = honcho.peer(username, { config: { observe_me: false } });
+        await session.addPeers([agent_peer, { observe_me: false, observe_others: true }]);
         print(`agent registered: ${username}`, "green");
       } else {
+        const user_peer = honcho.peer(username);
+        // TODO: add this behavior to honcho sdk
+        const honchoCore = new HonchoCore({
+          apiKey: process.env.HONCHO_API_KEY,
+          environment: "production",
+        });
+        const config = await honchoCore.workspaces.sessions.peers.getConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, username);
         const user: User = {
           id: socket.id,
           username,
           type: "human",
           socket,
+          observe_me: true,
         };
-        connectedUsers.set(socket.id, user);
-        const user_peer = honcho.peer(username, { config: { observe_me: true, observe_others: true } });
-        await session.addPeers([user_peer]);
+        user.observe_me = config.observe_me || true;
+        await session.addPeers([user_peer, { observe_me: user.observe_me, observe_others: false }]);
         print(`user registered: ${username}`, "green");
+        connectedUsers.set(socket.id, user);
       }
 
       socket.emit("history", chatHistory.slice(-50));
@@ -195,6 +204,51 @@ export function setupSocketIO(
       const peer = honcho.peer(data.user);
       const response = await peer.chat(data.query, { sessionId: session.id });
       callback(response || "No response from agent");
+    });
+
+    socket.on("toggle_observe", async (callback: Function) => {
+      const user = connectedUsers.get(socket.id);
+      if (!user) {
+        callback({ error: "User not found" });
+        return;
+      }
+
+      const newObserveStatus = !user.observe_me;
+      user.observe_me = newObserveStatus;
+      connectedUsers.set(socket.id, user);
+
+      try {
+        // TODO: add this behavior to honcho sdk
+        try {
+          const honchoCore = new HonchoCore({
+            apiKey: process.env.HONCHO_API_KEY,
+            environment: "production",
+          });
+          await honchoCore.workspaces.sessions.peers.setConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, user.username, { observe_me: newObserveStatus, observe_others: false });
+        } catch {
+          // Ignore error
+        }
+
+        const statusMessage = createMessage({
+          type: MessageType.SYSTEM,
+          username: "system",
+          content: `${user.username} ${newObserveStatus ? 'enabled' : 'disabled'} observation`,
+          metadata: { userId: socket.id, observeStatus: newObserveStatus },
+        });
+
+        socket.emit("message", statusMessage);
+        addToHistory(statusMessage, chatHistory);
+
+        callback({
+          success: true,
+          observe_me: newObserveStatus,
+          message: `Observation ${newObserveStatus ? 'enabled' : 'disabled'}`
+        });
+
+        print(`${user.username} ${newObserveStatus ? 'enabled' : 'disabled'} observation`, "blue");
+      } catch (error) {
+        callback({ error: `Failed to update observation status: ${error}` });
+      }
     });
   });
 }

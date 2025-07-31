@@ -2,9 +2,15 @@ import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import { Honcho } from "@honcho-ai/sdk";
 import type { Message, User, Agent } from "../types.js";
+import { MessageType } from "../types.js";
 import { createAPIRoutes } from "./api.js";
 import { setupSocketIO } from "./socket.js";
-import { displayStartupInfo, print } from "./utils.js";
+import { displayStartupInfo, print, generateId } from "./utils.js";
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const sessionFlag = args.findIndex(arg => arg === '--session');
+const providedSessionId = sessionFlag !== -1 && sessionFlag + 1 < args.length ? args[sessionFlag + 1] : null;
 
 // Initialize Honcho
 const honcho = new Honcho({
@@ -13,13 +19,42 @@ const honcho = new Honcho({
   workspaceId: process.env.HONCHO_WORKSPACE_ID!,
 });
 
-const session = honcho.session(`groupchat-${Date.now()}`);
+// Create or use existing session
+const sessionId = providedSessionId || `groupchat-${Date.now()}`;
+const session = honcho.session(sessionId);
 print(`honcho session: ${session.id}`, "cyan");
 
 // Application state
 const connectedUsers = new Map<string, User>();
 const chatHistory: Message[] = [];
 const agents = new Map<string, Agent>();
+
+// Load existing messages if using provided session
+if (providedSessionId) {
+  print("loading existing messages from session...", "yellow");
+  try {
+    const existingMessagesPage = await session.getMessages();
+    const existingMessages = await existingMessagesPage.data();
+    
+    for (const msg of existingMessages) {
+      const message: Message = {
+        id: generateId(),
+        type: MessageType.CHAT,
+        username: msg.user_id || "unknown",
+        content: msg.content,
+        metadata: {
+          timestamp: msg.created_at || new Date().toISOString(),
+          loadedFromSession: true,
+        },
+      };
+      chatHistory.push(message);
+    }
+    
+    print(`loaded ${existingMessages.length} messages from session`, "green");
+  } catch (error) {
+    print(`error loading messages from session: ${error}`, "red");
+  }
+}
 
 // Configuration
 const PORT = parseInt(Bun.env.PORT || "3000");

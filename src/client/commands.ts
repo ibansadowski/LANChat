@@ -12,6 +12,7 @@ export const commands: Command[] = [
   { value: '/users', label: '/users', description: 'List connected users and agents' },
   { value: '/history', label: '/history [n]', description: 'Show last n messages (default: 20)' },
   { value: '/dialectic', label: '/dialectic <user> <query>', description: 'Query participant psychology' },
+  { value: '/observe', label: '/observe', description: 'Toggle your observation status in the session' },
   { value: '/quit', label: '/quit', description: 'Exit the chat' },
 ];
 
@@ -76,6 +77,13 @@ export class CommandHandler {
           this.addSystemMessage(response, 'Dialectic');
         });
         break;
+      case "/observe":
+        this.client.toggleObserve((response) => {
+          if (response.error) {
+            this.addSystemMessage(`Error: ${response.error}`);
+          }
+        });
+        break;
       default:
         this.addSystemMessage(`Unknown command: ${cmd}. Type /help for available commands.`);
     }
@@ -83,6 +91,7 @@ export class CommandHandler {
 
   getAutocompleteOptions(input: string): Command[] {
     if (!input.startsWith('/')) return [];
+    if (input === '/') return commands;
     return commands.filter(cmd =>
       cmd.value.toLowerCase().startsWith(input.toLowerCase())
     );

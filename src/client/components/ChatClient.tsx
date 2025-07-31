@@ -25,7 +25,15 @@ export const ChatClient: React.FC<ChatClientProps> = ({ serverUrl, username }) =
   // Initialize client and command handler
   useEffect(() => {
     const chatClient = new ChatSocketClient(serverUrl, username, {
-      onConnect: () => setConnected(true),
+      onConnect: () => {
+        setConnected(true);
+        // Fetch message history when connected
+        chatClient.getHistory(100, (response) => {
+          if (!response.error && response.messages) {
+            setMessages(response.messages);
+          }
+        });
+      },
       onDisconnect: () => setConnected(false),
       onMessage: (message: Message) => {
         setMessages(prev => [...prev, message].slice(-100)); // Keep last 100 messages
