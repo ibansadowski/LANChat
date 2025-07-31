@@ -7,9 +7,11 @@ import type { Message, ResponseDecision, PsychologyAnalysis } from "./types.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const AGENT_NAME = args.find(arg => !arg.startsWith("--")) || "Assistant";
-const serverArg = args.find(arg => arg.startsWith("--server="));
-const SERVER_URL = serverArg ? serverArg.split("=")[1] : (Bun.env.CHAT_SERVER || "http://localhost:3000");
+const AGENT_NAME = args.find((arg) => !arg.startsWith("--")) || "Assistant";
+const serverArg = args.find((arg) => arg.startsWith("--server="));
+const SERVER_URL = serverArg
+	? serverArg.split("=")[1]
+	: Bun.env.CHAT_SERVER || "http://localhost:3000";
 
 const honcho = new Honcho({
 	environment: "production",
@@ -32,10 +34,13 @@ class ChatAgent {
 		this.ollama = new Ollama({ host: "http://localhost:11434" });
 		this.systemPrompt =
 			systemPrompt ||
-			`You are ${agentName}, a helpful participant in a group chat. 
+			`You are ${agentName}, a participant in a group chat. 
 You have access to a psychology analysis tool that can help you understand participants better.
-Use it when you think it would help you provide a more empathetic or appropriate response.
-Respond naturally and conversationally. Keep responses concise.`;
+Use it when you think it would help you provide a more insights on how to appropriately respond to something.
+Respond naturally and conversationally. Keep responses concise.
+
+Feel empowered to be chatty and ask follow-up questions.
+`;
 	}
 
 	async connect(): Promise<void> {
@@ -61,7 +66,9 @@ Respond naturally and conversationally. Keep responses concise.`;
 		this.socket.on("connect_error", (error) => {
 			console.error("❌ Connection error:", error.message);
 			if (error.message.includes("https")) {
-				console.log("💡 Note: Server might be using HTTP, not HTTPS. Try: --server=http://192.168.1.177:3000");
+				console.log(
+					"💡 Note: Server might be using HTTP, not HTTPS. Try: --server=http://192.168.1.177:3000",
+				);
 			}
 		});
 
@@ -144,6 +151,8 @@ Consider:
 - Is it a question that needs answering?
 - Would your response add value to the conversation?
 - Have you responded too much recently?
+
+lean on the side of responding and keeping the conversation going
 
 JSON response:`,
 				format: "json",
@@ -234,10 +243,18 @@ JSON response:`,
 
 				// Process tool calls
 				for (const tool of response.message.tool_calls) {
-					const functionToCall = availableFunctions[tool.function.name as keyof typeof availableFunctions];
+					const functionToCall =
+						availableFunctions[
+							tool.function.name as keyof typeof availableFunctions
+						];
 					if (functionToCall) {
 						console.log(`Calling tool: ${tool.function.name}`);
-						const result = await functionToCall(tool.function.arguments as { participantName: string; query: string; });
+						const result = await functionToCall(
+							tool.function.arguments as {
+								participantName: string;
+								query: string;
+							},
+						);
 
 						// Add the tool response to messages
 						messages.push(response.message);
