@@ -38,15 +38,19 @@ export function setupSocketIO(
           apiKey: process.env.HONCHO_API_KEY,
           environment: "production",
         });
-        const config = await honchoCore.workspaces.sessions.peers.getConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, username);
+        let config = null;
+        try {
+          config = await honchoCore.workspaces.sessions.peers.getConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, username);
+        } catch {
+          config = { observe_me: true, observe_others: false };
+        }
         const user: User = {
           id: socket.id,
           username,
           type: "human",
           socket,
-          observe_me: true,
+          observe_me: config.observe_me || true,
         };
-        user.observe_me = config.observe_me || true;
         await session.addPeers([user_peer, { observe_me: user.observe_me, observe_others: false }]);
         print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);

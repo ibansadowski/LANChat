@@ -8,7 +8,10 @@ interface MessageFormatterProps {
 }
 
 export const MessageFormatter: React.FC<MessageFormatterProps> = ({ message, currentUsername }) => {
-  const timestamp = new Date(message.metadata.timestamp).toLocaleTimeString();
+  let timestamp = new Date(message.metadata.timestamp).toLocaleTimeString();
+  if (timestamp === "Invalid Date") {
+    timestamp = message.metadata.timestamp;
+  }
   
   switch (message.type) {
     case "chat":

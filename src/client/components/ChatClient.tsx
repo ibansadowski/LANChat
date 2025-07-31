@@ -29,8 +29,8 @@ export const ChatClient: React.FC<ChatClientProps> = ({ serverUrl, username }) =
         setConnected(true);
         // Fetch message history when connected
         chatClient.getHistory(100, (response) => {
-          if (!response.error && response.messages) {
-            setMessages(response.messages);
+          if (!response.error && response.history) {
+            setMessages(response.history);
           }
         });
       },

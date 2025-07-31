@@ -55,17 +55,6 @@ export class CommandHandler {
           }
         });
         break;
-      case "/history":
-        const limit = parseInt(parts[1] || "20");
-        this.client.getHistory(limit, (response) => {
-          if (response.error) {
-            this.addSystemMessage(`Error: ${response.error}`);
-          } else {
-            // Replace current messages with history
-            response.history.forEach(msg => this.onMessage(msg));
-          }
-        });
-        break;
       case "/dialectic":
         const user = parts[1];
         const query = parts.slice(2).join(" ");

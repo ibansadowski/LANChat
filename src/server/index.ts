@@ -35,12 +35,12 @@ if (providedSessionId) {
   try {
     const existingMessagesPage = await session.getMessages();
     const existingMessages = await existingMessagesPage.data();
-    
+
     for (const msg of existingMessages) {
       const message: Message = {
-        id: generateId(),
+        id: msg.id,
         type: MessageType.CHAT,
-        username: msg.user_id || "unknown",
+        username: msg.peer_id || "unknown",
         content: msg.content,
         metadata: {
           timestamp: msg.created_at || new Date().toISOString(),
@@ -49,7 +49,7 @@ if (providedSessionId) {
       };
       chatHistory.push(message);
     }
-    
+
     print(`loaded ${existingMessages.length} messages from session`, "green");
   } catch (error) {
     print(`error loading messages from session: ${error}`, "red");

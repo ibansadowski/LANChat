@@ -64,6 +64,13 @@ export interface HistoryResponse {
   error?: string;
 }
 
+export interface HonchoMessage {
+  id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+}
+
 // Agent-specific types
 export interface ResponseDecision {
   should_respond: boolean;
