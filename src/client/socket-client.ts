@@ -14,8 +14,7 @@ export class ChatSocketClient {
   private events: ChatClientEvents;
   private serverUrl: string;
   private username: string;
-  private usersUpdateInterval: NodeJS.Timeout | null = null;
-  
+
   constructor(serverUrl: string, username: string, events: ChatClientEvents) {
     this.serverUrl = serverUrl;
     this.username = username;
@@ -24,23 +23,28 @@ export class ChatSocketClient {
 
   connect(): void {
     this.socket = io(this.serverUrl);
-    
+
     this.socket.on("connect", () => {
       this.events.onConnect();
       this.socket!.emit("register", {
         username: this.username,
         type: "human",
       });
-      this.startUsersUpdates();
+      setTimeout(() => {
+        this.updateUsersList();
+      }, 1000);
     });
 
     this.socket.on("disconnect", () => {
       this.events.onDisconnect();
-      this.stopUsersUpdates();
     });
 
     this.socket.on("message", (message: Message) => {
       this.events.onMessage(message);
+      // Update users list when someone joins or leaves
+      if (message.type === 'join' || message.type === 'leave') {
+        this.updateUsersList();
+      }
     });
 
     this.socket.on("connect_error", (error: Error) => {
@@ -49,7 +53,6 @@ export class ChatSocketClient {
   }
 
   disconnect(): void {
-    this.stopUsersUpdates();
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
@@ -58,7 +61,7 @@ export class ChatSocketClient {
 
   sendMessage(content: string): void {
     if (!this.socket) return;
-    
+
     this.socket.emit("chat", {
       content,
       metadata: {
@@ -87,26 +90,12 @@ export class ChatSocketClient {
     this.socket.emit("toggle_observe", callback);
   }
 
-  private startUsersUpdates(): void {
-    if (this.usersUpdateInterval) return;
-    
-    const updateUsers = () => {
-      this.getUsers((response: UsersResponse) => {
-        if (!response.error) {
-          this.events.onUsersUpdate(response.users as User[], response.agents as Agent[]);
-        }
-      });
-    };
-
-    updateUsers(); // Initial update
-    this.usersUpdateInterval = setInterval(updateUsers, 5000);
-  }
-
-  private stopUsersUpdates(): void {
-    if (this.usersUpdateInterval) {
-      clearInterval(this.usersUpdateInterval);
-      this.usersUpdateInterval = null;
-    }
+  private updateUsersList(): void {
+    this.getUsers((response: UsersResponse) => {
+      if (!response.error) {
+        this.events.onUsersUpdate(response.users as User[], response.agents as Agent[]);
+      }
+    });
   }
 
   get isConnected(): boolean {

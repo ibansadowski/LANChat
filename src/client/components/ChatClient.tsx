@@ -17,7 +17,6 @@ export const ChatClient: React.FC<ChatClientProps> = ({ serverUrl, username }) =
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
   const [client, setClient] = useState<ChatSocketClient | null>(null);
   const [commandHandler, setCommandHandler] = useState<CommandHandler | null>(null);
   const { stdout } = useStdout();
@@ -48,9 +47,8 @@ export const ChatClient: React.FC<ChatClientProps> = ({ serverUrl, username }) =
         };
         setMessages(prev => [...prev, errorMessage]);
       },
-      onUsersUpdate: (newUsers: User[], newAgents: Agent[]) => {
+      onUsersUpdate: (newUsers: User[]) => {
         setUsers(newUsers);
-        setAgents(newAgents);
       }
     });
 
@@ -99,7 +97,7 @@ export const ChatClient: React.FC<ChatClientProps> = ({ serverUrl, username }) =
         </Box>
 
         {/* Sidebar */}
-        <Sidebar users={users} agents={agents} />
+        <Sidebar users={users} />
       </Box>
 
       {/* Input area */}

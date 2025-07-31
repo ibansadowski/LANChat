@@ -171,7 +171,7 @@ export function setupSocketIO(
       const messageType = data.messageType;
       const since = data.since ? new Date(data.since) : null;
 
-      let filteredHistory = chatHistory;
+      let filteredHistory = chatHistory.filter(msg => msg.type !== MessageType.JOIN && msg.type !== MessageType.LEAVE);
 
       if (messageType) {
         filteredHistory = filteredHistory.filter((msg) => msg.type === messageType);
