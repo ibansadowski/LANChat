@@ -5,9 +5,11 @@ import { Ollama } from "ollama";
 import { Honcho } from "@honcho-ai/sdk";
 import type { Message, ResponseDecision, PsychologyAnalysis } from "./types.js";
 
-// Configuration
-const SERVER_URL = Bun.env.CHAT_SERVER || "http://localhost:3000";
-const AGENT_NAME = process.argv[2] || "Assistant";
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AGENT_NAME = args.find(arg => !arg.startsWith("--")) || "Assistant";
+const serverArg = args.find(arg => arg.startsWith("--server="));
+const SERVER_URL = serverArg ? serverArg.split("=")[1] : (Bun.env.CHAT_SERVER || "http://localhost:3000");
 
 const honcho = new Honcho({
 	environment: "production",
@@ -39,7 +41,12 @@ Respond naturally and conversationally. Keep responses concise.`;
 	async connect(): Promise<void> {
 		console.log(`🤖 ${this.agentName} connecting to ${SERVER_URL}...`);
 
-		this.socket = io(SERVER_URL);
+		this.socket = io(SERVER_URL, {
+			transports: ["websocket"],
+			reconnection: true,
+			reconnectionAttempts: 5,
+			reconnectionDelay: 1000,
+		});
 
 		this.socket.on("connect", () => {
 			console.log("✅ Connected to chat server");
@@ -51,8 +58,15 @@ Respond naturally and conversationally. Keep responses concise.`;
 			});
 		});
 
-		this.socket.on("disconnect", () => {
-			console.log("❌ Disconnected from server");
+		this.socket.on("connect_error", (error) => {
+			console.error("❌ Connection error:", error.message);
+			if (error.message.includes("https")) {
+				console.log("💡 Note: Server might be using HTTP, not HTTPS. Try: --server=http://192.168.1.177:3000");
+			}
+		});
+
+		this.socket.on("disconnect", (reason) => {
+			console.log(`❌ Disconnected from server: ${reason}`);
 		});
 
 		// Listen to all messages

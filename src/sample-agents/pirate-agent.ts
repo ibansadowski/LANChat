@@ -2,7 +2,11 @@
 
 import { ChatAgent } from "../agent";
 
-const AGENT_NAME = process.argv[2] || "CaptainBot";
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AGENT_NAME = args.find(arg => !arg.startsWith("--")) || "CaptainBot";
+const serverArg = args.find(arg => arg.startsWith("--server="));
+const SERVER_URL = serverArg ? serverArg.split("=")[1] : (process.env.CHAT_SERVER || "http://localhost:3000");
 
 class PirateAgent extends ChatAgent {
   constructor(name: string) {
@@ -21,7 +25,7 @@ Keep yer responses short and witty, like a true sea dog! End messages with thing
 
   async connect(): Promise<void> {
     console.log(
-      `🏴‍☠️ Ahoy! Captain ${this.agentName} be settin' sail to ${process.env.CHAT_SERVER || "http://localhost:3000"}...`,
+      `🏴‍☠️ Ahoy! Captain ${this.agentName} be settin' sail to ${SERVER_URL}...`,
     );
     await super.connect();
   }

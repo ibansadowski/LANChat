@@ -2,7 +2,11 @@
 
 import { ChatAgent } from "../agent";
 
-const AGENT_NAME = process.argv[2] || "ZoeBot";
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AGENT_NAME = args.find(arg => !arg.startsWith("--")) || "ZoeBot";
+const serverArg = args.find(arg => arg.startsWith("--server="));
+const SERVER_URL = serverArg ? serverArg.split("=")[1] : (process.env.CHAT_SERVER || "http://localhost:3000");
 
 class TeenagerAgent extends ChatAgent {
   constructor(name: string) {
@@ -22,7 +26,7 @@ Type in lowercase most of the time. Occasionally use "lol", "lmao", or "ngl" in 
 
   async connect(): Promise<void> {
     console.log(
-      `✨ yooo ${this.agentName} is pulling up to ${process.env.CHAT_SERVER || "http://localhost:3000"} rn...`,
+      `✨ yooo ${this.agentName} is pulling up to ${SERVER_URL} rn...`,
     );
     await super.connect();
   }
