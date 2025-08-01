@@ -3,136 +3,207 @@
 import { io, type Socket } from "socket.io-client";
 import { Ollama } from "ollama";
 import { Honcho } from "@honcho-ai/sdk";
+import type {
+  Message,
+  ResponseDecision,
+  PsychologyAnalysis,
+  AgentDecision,
+  Dialectic,
+  Search,
+} from "./types.js";
 
-// Configuration
-const SERVER_URL = Bun.env.CHAT_SERVER || "http://localhost:3000";
-const AGENT_NAME = process.argv[2] || "Assistant";
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AGENT_NAME = args.find((arg) => !arg.startsWith("--")) || "Assistant";
+const serverArg = args.find((arg) => arg.startsWith("--server="));
+const SERVER_URL = serverArg
+  ? serverArg.split("=")[1]
+  : Bun.env.CHAT_SERVER || "http://localhost:3000";
 
 const honcho = new Honcho({
-	environment: "production",
-	apiKey: process.env.HONCHO_API_KEY!,
-	workspaceId: process.env.HONCHO_WORKSPACE_ID!,
+  environment: "production",
+  apiKey: process.env.HONCHO_API_KEY!,
+  workspaceId: process.env.HONCHO_WORKSPACE_ID!,
 });
 
-interface Message {
-	id: string;
-	type: "chat" | "agent_response" | "system" | "join" | "leave" | "agent_data";
-	username: string;
-	content: string;
-	metadata: {
-		timestamp: string;
-		[key: string]: any;
-	};
-}
-
-interface ResponseDecision {
-	should_respond: boolean;
-	reason: string;
-	confidence: number;
-}
-
-interface PsychologyAnalysis {
-	participant: string;
-	response: string;
-}
-
 class ChatAgent {
-	protected socket: Socket | null = null;
-	protected agentName: string;
-	protected messageHistory: Message[] = [];
-	protected ollama: Ollama;
-	protected systemPrompt: string;
-	protected temperature: number = 0.7;
-	protected responseLength: number = 100;
-	protected sessionId: string | null = null;
+  protected socket: Socket | null = null;
+  protected agentName: string;
+  protected ollama: Ollama;
+  protected systemPrompt: string;
+  protected temperature: number = 0.7;
+  protected responseLength: number = 100;
+  protected sessionId: string | null = null;
 
-	constructor(agentName: string, systemPrompt?: string) {
-		this.agentName = agentName;
-		this.ollama = new Ollama({ host: "http://localhost:11434" });
-		this.systemPrompt =
-			systemPrompt ||
-			`You are ${agentName}, a helpful participant in a group chat. 
+  constructor(agentName: string, systemPrompt?: string) {
+    this.agentName = agentName;
+    this.ollama = new Ollama({ host: "http://localhost:11434" });
+    this.systemPrompt =
+      systemPrompt ||
+      `You are ${agentName}, a participant in a group chat. 
 You have access to a psychology analysis tool that can help you understand participants better.
-Use it when you think it would help you provide a more empathetic or appropriate response.
-Respond naturally and conversationally. Keep responses concise.`;
-	}
+Use it when you think it would help you provide a more insights on how to appropriately respond to something.
+Respond naturally and conversationally. Keep responses concise.
 
-	async connect(): Promise<void> {
-		console.log(`🤖 ${this.agentName} connecting to ${SERVER_URL}...`);
+Feel empowered to be chatty and ask follow-up questions.
+`;
+  }
 
-		this.socket = io(SERVER_URL);
+  async connect(): Promise<void> {
+    console.log(`🤖 ${this.agentName} connecting to ${SERVER_URL}...`);
 
-		this.socket.on("connect", () => {
-			console.log("✅ Connected to chat server");
+    this.socket = io(SERVER_URL, {
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
 
-			// Register as a regular user (not as agent type)
-			this.socket!.emit("register", {
-				username: this.agentName,
-				type: "user",
-			});
-		});
+    this.socket.on("connect", () => {
+      console.log("✅ Connected to chat server");
 
-		this.socket.on("disconnect", () => {
-			console.log("❌ Disconnected from server");
-		});
+      // Register as a regular user (not as agent type)
+      this.socket!.emit("register", {
+        username: this.agentName,
+        type: "user",
+      });
+    });
 
-		// Listen to all messages
-		this.socket.on("message", async (message: Message) => {
-			// Add to history
-			this.messageHistory.push(message);
+    this.socket.on("connect_error", (error) => {
+      console.error("❌ Connection error:", error.message);
+      if (error.message.includes("https")) {
+        console.log(
+          "💡 Note: Server might be using HTTP, not HTTPS. Try: --server=http://192.168.1.177:3000",
+        );
+      }
+    });
 
-			// Keep only last 20 messages
-			if (this.messageHistory.length > 20) {
-				this.messageHistory.shift();
-			}
+    this.socket.on("disconnect", (reason) => {
+      console.log(`❌ Disconnected from server: ${reason}`);
+    });
 
-			// Only process chat messages from others
-			if (message.type === "chat" && message.username !== this.agentName) {
-				await this.processMessage(message);
-			}
-		});
+    // Listen to all messages
+    this.socket.on("message", async (message: Message) => {
+      // Only process chat messages from others
+      if (message.type === "chat" && message.username !== this.agentName) {
+        await this.processMessage(message);
+      }
+    });
 
-		// Receive session id from server
-		this.socket.on("session_id", (sessionId: string) => {
-			this.sessionId = sessionId;
-		});
+    // Receive session id from server
+    this.socket.on("session_id", (sessionId: string) => {
+      this.sessionId = sessionId;
+    });
+  }
 
-		// Receive initial history
-		this.socket.on("history", (history: Message[]) => {
-			this.messageHistory = history.slice(-20); // Keep last 20 messages
-			console.log(
-				`📜 Loaded ${this.messageHistory.length} historical messages`,
-			);
-		});
-	}
+  private async processMessage(message: Message): Promise<void> {
+    // Build context
+    const context = await honcho
+      .session(this.sessionId || "")
+      .getContext({ tokens: 5000 });
+    const recentContext: string =
+      context.summary +
+      "\n\n" +
+      context.toOpenAI(this.agentName).slice(-5).join("\n");
+    // State 1: Decide if we should respond
+    const decision = await this.shouldRespond(message, recentContext);
+    console.log(
+      `🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason}`,
+    );
 
-	private async processMessage(message: Message): Promise<void> {
-		// State 1: Decide if we should respond
-		const decision = await this.shouldRespond(message);
-		console.log(
-			`🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason}`,
-		);
+    if (!decision.should_respond) {
+      return;
+    }
 
-		if (!decision.should_respond) {
-			return;
-		}
+    const action = await this.decideAction(message, recentContext, {});
 
-		// State 2: Generate response with tools
-		await this.generateResponseWithTools(message);
-	}
+    // State 2: Generate response with tools
+  }
 
-	private async shouldRespond(message: Message): Promise<ResponseDecision> {
-		try {
-			// Build context for decision
-			const recentContext = this.messageHistory
-				.slice(-5)
-				.filter((m) => m.type === "chat")
-				.map((m) => `${m.username}: ${m.content}`)
-				.join("\n");
+  private async decideAction(
+    message: Message,
+    recentContext: string,
+    tracker: Record<string, any>,
+  ): Promise<void> {
+    // analyze psychology
+    // search for additional context
+    // response directly
+    try {
+      const response = await this.ollama.generate({
+        model: "llama3.1:8b",
+        prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
-			const response = await this.ollama.generate({
-				model: "llama3.1:8b",
-				prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
+Recent conversation:
+${recentContext}
+
+Latest message from ${message.username}: "${message.content}"
+
+You have 3 different tools you can use to gather more context before responding. They are
+
+1. Analyze the psychology - This let's you ask a question to a model of an agent to better understand them and learn how to respond appropriately
+
+2. Search for additional context - This let's you search the conversation history with a query 
+
+3. Respond directly - This let's you respond directly to the user
+
+Respond with a JSON object with this exact format:
+{
+  "decision": psychology or search or respond,
+  "reason": "brief explanation",
+  "confidence": 0.0 to 1.0
+}
+
+JSON response:`,
+        format: "json",
+        options: {
+          temperature: 0.3,
+          num_predict: 100,
+        },
+      });
+
+      // Parse the response
+      const decision = JSON.parse(response.response) as AgentDecision;
+
+      if (
+        decision.decision === "psychology" &&
+        tracker["psychology"] === undefined
+      ) {
+        const psychologyResponse = await this.analyzePsychology(
+          message,
+          recentContext,
+        );
+        tracker["psychology"] = psychologyResponse;
+        this.decideAction(message, recentContext, tracker);
+      } else if (
+        decision.decision === "search" &&
+        tracker["search"] === undefined
+      ) {
+        const searchResponse = await this.search(message, recentContext);
+        const pageData = await searchResponse.data();
+        const messages = [];
+        for (const msg of pageData) {
+          messages.push(msg);
+        }
+        tracker["search"] = messages;
+        this.decideAction(message, recentContext, tracker);
+      } else {
+        await this.generateResponse(message, recentContext, tracker);
+      }
+    } catch (error) {
+      console.error("Error in decision making:", error);
+      // Default to not responding on error
+      return;
+    }
+  }
+
+  private async shouldRespond(
+    message: Message,
+    recentContext: string,
+  ): Promise<ResponseDecision> {
+    try {
+      const response = await this.ollama.generate({
+        model: "llama3.1:8b",
+        prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
 Recent conversation:
 ${recentContext}
@@ -152,181 +223,214 @@ Consider:
 - Would your response add value to the conversation?
 - Have you responded too much recently?
 
+lean on the side of responding and keeping the conversation going
+
 JSON response:`,
-				format: "json",
-				options: {
-					temperature: 0.3,
-					num_predict: 100,
-				},
-			});
+        format: "json",
+        options: {
+          temperature: 0.3,
+          num_predict: 100,
+        },
+      });
 
-			// Parse the response
-			const decision = JSON.parse(response.response) as ResponseDecision;
-			return decision;
-		} catch (error) {
-			console.error("Error in decision making:", error);
-			// Default to not responding on error
-			return {
-				should_respond: false,
-				reason: "Error in decision process",
-				confidence: 0.0,
-			};
-		}
-	}
+      // Parse the response
+      const decision = JSON.parse(response.response) as ResponseDecision;
+      return decision;
+    } catch (error) {
+      console.error("Error in decision making:", error);
+      // Default to not responding on error
+      return {
+        should_respond: false,
+        reason: "Error in decision process",
+        confidence: 0.0,
+      };
+    }
+  }
 
-	private async generateResponseWithTools(message: Message): Promise<void> {
-		try {
-			// Build conversation history
-			const conversationHistory = this.messageHistory
-				.filter((m) => m.type === "chat")
-				.map((m) => ({
-					role: m.username === this.agentName ? "assistant" : "user",
-					content: `${m.username}: ${m.content}`,
-				}));
+  private async search(message: Message, recentContext: string): Promise<any> {
+    try {
+      const response = await this.ollama.generate({
+        model: "llama3.1:8b",
+        prompt: `You are ${this.agentName} in a group chat. You want to search the conversation history to get more context on something.
 
-			// Define the psychology analysis tool
-			const analyzeParticipantTool = {
-				type: "function",
-				function: {
-					name: "analyzeParticipant",
-					description:
-						"Analyze the psychology and communication style of a chat participant to better understand how to interact with them",
-					parameters: {
-						type: "object",
-						required: ["participantName", "query"],
-						properties: {
-							participantName: {
-								type: "string",
-								description: "The username of the participant to analyze",
-							},
-							query: {
-								type: "string",
-								description:
-									"A specific question about this participant you want answered based on their chat history",
-							},
-						},
-					},
-				},
-			};
+Recent conversation:
+${recentContext}
 
-			// Available functions mapping
-			const availableFunctions = {
-				analyzeParticipant: this.analyzeParticipant.bind(this),
-			};
+Latest message from ${message.username}: "${message.content}"
 
-			console.log(`💭 Generating response...`);
+Decide on a semantic query to search for in the conversation history
 
-			// Initial chat with tools
-			const messages = [
-				{
-					role: "system",
-					content: this.systemPrompt,
-				},
-				...conversationHistory,
-			];
+Respond with a JSON object with this exact format:
+{
+  "query": Word or Phrase you want to search to get more context,
+}
 
-			const response = await this.ollama.chat({
-				model: "llama3.1:8b",
-				messages: messages,
-				tools: [analyzeParticipantTool],
-				options: {
-					temperature: this.temperature,
-					num_predict: this.responseLength + 50, // Extra tokens for tool calls
-				},
-			});
+JSON response:`,
+        format: "json",
+        options: {
+          temperature: 0.3,
+          num_predict: 100,
+        },
+      });
 
-			// Handle tool calls if any
-			if (response.message.tool_calls) {
-				console.log(`🛠️ Using tools...`);
+      const search = JSON.parse(response.response) as Search;
 
-				// Process tool calls
-				for (const tool of response.message.tool_calls) {
-					const functionToCall = availableFunctions[tool.function.name];
-					if (functionToCall) {
-						console.log(`Calling tool: ${tool.function.name}`);
-						const result = await functionToCall(tool.function.arguments);
+      const semanticResponse = await honcho
+        .session(this.sessionId || "")
+        .search(search.query);
 
-						// Add the tool response to messages
-						messages.push(response.message);
-						messages.push({
-							role: "tool",
-							content: JSON.stringify(result),
-						});
-					}
-				}
+      return semanticResponse;
+    } catch (error) {
+      console.error("Error generating response:", error);
+    }
+  }
 
-				// Get final response with tool results
-				const finalResponse = await this.ollama.chat({
-					model: "llama3.1:8b",
-					messages: messages,
-					options: {
-						temperature: this.temperature,
-						num_predict: this.responseLength,
-					},
-				});
+  private async analyzePsychology(
+    message: Message,
+    recentContext: string,
+  ): Promise<any> {
+    try {
+      const response = await this.ollama.generate({
+        model: "llama3.1:8b",
+        prompt: `You are ${this.agentName} in a group chat. You want to analyze the psychology of a participant more deeply to understand how to best respond.
 
-				// Send the final response
-				this.socket!.emit("chat", {
-					content: finalResponse.message.content.trim(),
-				});
-			} else {
-				// No tools used, send the direct response
-				this.socket!.emit("chat", {
-					content: response.message.content.trim(),
-				});
-			}
-		} catch (error) {
-			console.error("Error generating response:", error);
-		}
-	}
+Recent conversation:
+${recentContext}
 
-	private async analyzeParticipant(args: {
-		participantName: string;
-		query: string;
-	}): Promise<PsychologyAnalysis> {
-		const my_peer = honcho.peer(this.agentName);
-		const response = await my_peer.chat(args.query, {
-			sessionId: this.sessionId || undefined,
-			target: args.participantName,
-		});
+Latest message from ${message.username}: "${message.content}"
 
-		console.log("============== ANALYSIS ==============");
-		console.log("Query: ", args.query);
-		console.log(response);
-		console.log("============== ANALYSIS COMPLETE ==============");
+Decide who you want to ask a question about and what question you want to ask 
 
-		if (response === null) {
-			return {
-				participant: args.participantName,
-				response: `No information found for query: ${args.query}`,
-			};
-		}
-		return {
-			participant: args.participantName,
-			response: response,
-		};
-	}
+Respond with a JSON object with this exact format:
+{
+  "target": string,
+  "question": "What do you want to know about the target that would help you respond?",
+}
+
+JSON response:`,
+        format: "json",
+        options: {
+          temperature: 0.3,
+          num_predict: 100,
+        },
+      });
+
+      const dialectic = JSON.parse(response.response) as Dialectic;
+
+      const dialecticResponse = await honcho
+        .peer(this.agentName)
+        .chat(dialectic.question, {
+          sessionId: this.sessionId || undefined,
+          target: dialectic.target,
+        });
+      return dialecticResponse;
+    } catch (error) {
+      console.error("Error generating response:", error);
+    }
+  }
+
+  private async generateResponse(
+    message: Message,
+    recentContext: string,
+    tracker: Record<string, any>,
+  ): Promise<void> {
+    try {
+      console.log(`💭 Generating response...`);
+
+      // Initial chat with tools
+      const messages = [
+        {
+          role: "system",
+          content: this.systemPrompt,
+        },
+        {
+          role: "system",
+          content: `
+Here is context on the conversation so far:
+
+Recent Conversation Context:
+${recentContext}
+
+You received a message from ${message.username}: "${message.content}"
+
+${tracker["psychology"] ? `Psychology analysis of ${message.username}: ${tracker["psychology"]}` : ""}
+
+${tracker["search"] ? `Semantic search of conversation history: ${tracker["search"]}` : ""}
+
+`,
+        },
+      ];
+
+      const response = await this.ollama.chat({
+        model: "llama3.1:8b",
+        messages: messages,
+        options: {
+          temperature: this.temperature,
+          num_predict: this.responseLength + 50, // Extra tokens for tool calls
+        },
+      });
+
+      // Handle tool calls if any
+      // No tools used, send the direct response
+      this.socket!.emit("chat", {
+        content: response.message.content.trim(),
+      });
+    } catch (error) {
+      console.error("Error generating response:", error);
+    }
+  }
+
+  private async analyzeParticipant(args: {
+    participantName: string;
+    query: string;
+  }): Promise<PsychologyAnalysis> {
+    const my_peer = honcho.peer(this.agentName);
+    const response = await my_peer.chat(args.query, {
+      sessionId: this.sessionId || undefined,
+      target: args.participantName,
+    });
+
+    console.log("============== ANALYSIS ==============");
+    console.log("Query: ", args.query);
+    console.log(response);
+    console.log("============== ANALYSIS COMPLETE ==============");
+
+    if (response === null) {
+      return {
+        participant: args.participantName,
+        response: `No information found for query: ${args.query}`,
+      };
+    }
+    return {
+      participant: args.participantName,
+      response: response,
+    };
+  }
+
+  disconnect(): void {
+    if (this.socket) {
+      this.socket.disconnect();
+    }
+  }
 }
 
 // Export the class for extension
 export {
-	ChatAgent,
-	type Message,
-	type ResponseDecision,
-	type PsychologyAnalysis,
+  ChatAgent,
+  type Message,
+  type ResponseDecision,
+  type PsychologyAnalysis,
 };
 
 // Only run if this file is executed directly
 if (import.meta.main) {
-	const agent = new ChatAgent(AGENT_NAME);
-	agent.connect().catch(console.error);
+  const agent = new ChatAgent(AGENT_NAME);
+  agent.connect().catch(console.error);
 
-	// Handle graceful shutdown
-	process.on("SIGINT", () => {
-		console.log("\n👋 Shutting down...");
-		if (agent.socket) {
-			agent.socket.disconnect();
-		}
-		process.exit(0);
-	});
+  // Handle graceful shutdown
+  process.on("SIGINT", () => {
+    console.log("\n👋 Shutting down...");
+    agent.disconnect();
+    process.exit(0);
+  });
 }

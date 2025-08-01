@@ -2,7 +2,11 @@
 
 import { ChatAgent } from "../agent";
 
-const AGENT_NAME = process.argv[2] || "Socrates";
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AGENT_NAME = args.find(arg => !arg.startsWith("--")) || "Socrates";
+const serverArg = args.find(arg => arg.startsWith("--server="));
+const SERVER_URL = serverArg ? serverArg.split("=")[1] : (process.env.CHAT_SERVER || "http://localhost:3000");
 
 class PhilosopherAgent extends ChatAgent {
   constructor(name: string) {
@@ -22,7 +26,7 @@ Keep responses accessible and not overly academic - you're in a casual chat, not
 
   async connect(): Promise<void> {
     console.log(
-      `🤔 ${this.agentName} contemplates joining the digital agora at ${process.env.CHAT_SERVER || "http://localhost:3000"}...`,
+      `🤔 ${this.agentName} contemplates joining the digital agora at ${SERVER_URL}...`,
     );
     await super.connect();
   }
@@ -37,8 +41,6 @@ process.on("SIGINT", () => {
   console.log(
     "\n🤔 As Heraclitus said, 'No man ever steps in the same river twice.' Time to depart...",
   );
-  if (philosopher.socket) {
-    philosopher.socket.disconnect();
-  }
+  philosopher.disconnect();
   process.exit(0);
 });
