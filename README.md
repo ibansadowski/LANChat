@@ -46,23 +46,23 @@ The server will show you exactly which IPs to use! Example output:
 
 ```bash
 # Connect with default username
-bun run src/client.ts
+bun run client
 
 # Connect with custom username
-bun run src/client.ts Alice
+bun run client Alice
 
 # Connect to remote server
-bun run src/client.ts Bob --server=http://192.168.1.100:3000
+bun run client Bob --server=http://192.168.1.100:3000
 ```
 
 ### 4. Start AI Agents
 
 ```bash
 # Start an agent with default name
-bun run src/agent.ts
+bun run agent
 
 # Start with custom agent name
-bun run src/agent.ts SmartBot
+bun run agent SmartBot
 ```
 
 ## Message Types
