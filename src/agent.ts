@@ -57,8 +57,10 @@ Feel empowered to be chatty and ask follow-up questions.
 		this.socket = io(SERVER_URL, {
 			transports: ["websocket"],
 			reconnection: true,
-			reconnectionAttempts: 5,
+			reconnectionAttempts: Infinity,
 			reconnectionDelay: 1000,
+			reconnectionDelayMax: 5000,
+			timeout: 20000,
 		});
 
 		this.socket.on("connect", () => {
@@ -100,9 +102,8 @@ Feel empowered to be chatty and ask follow-up questions.
 
 	private async processMessage(message: Message): Promise<void> {
 		// Build context
-		const context = await honcho
-			.session(this.sessionId || "")
-			.getContext({ tokens: 5000 });
+		const session = await honcho.session(this.sessionId || "");
+		const context = await session.getContext({ tokens: 5000 });
 		const recentContext: string =
 			context.summary +
 			"\n\n" +
@@ -181,10 +182,15 @@ JSON response:`,
 				tracker["search"] === undefined
 			) {
 				const searchResponse = await this.search(message, recentContext);
-				const pageData = await searchResponse.data();
+				// Fix: searchResponse is already the data, no need to call .data()
 				const messages = [];
-				for (const msg of pageData) {
-					messages.push(msg);
+				if (searchResponse && Array.isArray(searchResponse)) {
+					for (const msg of searchResponse) {
+						messages.push(msg);
+					}
+				} else if (searchResponse) {
+					// Handle if it's a single message or different format
+					messages.push(searchResponse);
 				}
 				tracker["search"] = messages;
 				this.decideAction(message, recentContext, tracker);
@@ -277,9 +283,8 @@ JSON response:`,
 
 			const search = JSON.parse(response.response) as Search;
 
-			const semanticResponse = await honcho
-				.session(this.sessionId || "")
-				.search(search.query);
+			const session = await honcho.session(this.sessionId || "");
+			const semanticResponse = await session.search(search.query);
 
 			return semanticResponse;
 		} catch (error) {
@@ -319,12 +324,11 @@ JSON response:`,
 
 			const dialectic = JSON.parse(response.response) as Dialectic;
 
-			const dialecticResponse = await honcho
-				.peer(this.agentName)
-				.chat(dialectic.question, {
-					sessionId: this.sessionId || undefined,
-					target: dialectic.target,
-				});
+			const peer = await honcho.peer(this.agentName);
+			const dialecticResponse = await peer.chat(dialectic.question, {
+				sessionId: this.sessionId || undefined,
+				target: dialectic.target,
+			});
 			return dialecticResponse;
 		} catch (error) {
 			console.error("Error generating response:", error);
@@ -346,20 +350,17 @@ JSON response:`,
 					content: this.systemPrompt,
 				},
 				{
-					role: "system",
-					content: `
-Here is context on the conversation so far:
-
-Recent Conversation Context:
+					role: "user",
+					content: `Recent conversation:
 ${recentContext}
 
-You received a message from ${message.username}: "${message.content}"
+${message.username} said: "${message.content}"
 
 ${tracker["psychology"] ? `Psychology analysis of ${message.username}: ${tracker["psychology"]}` : ""}
 
 ${tracker["search"] ? `Semantic search of conversation history: ${tracker["search"]}` : ""}
 
-`,
+Please respond naturally as ${this.agentName}.`,
 				},
 			];
 
@@ -372,10 +373,22 @@ ${tracker["search"] ? `Semantic search of conversation history: ${tracker["searc
 				},
 			});
 
+			// Debug logging
+			console.log("Ollama response:", JSON.stringify(response, null, 2));
+
 			// Handle tool calls if any
 			// No tools used, send the direct response
+			const responseContent = response.message?.content?.trim() || response.response?.trim();
+			
+			if (!responseContent) {
+				console.error("Empty response from Ollama - full response:", response);
+				console.error("Model used:", MODEL);
+				return;
+			}
+			
+			console.log(`📤 Sending response: ${responseContent.substring(0, 50)}...`);
 			this.socket!.emit("chat", {
-				content: response.message.content.trim(),
+				content: responseContent,
 			});
 		} catch (error) {
 			console.error("Error generating response:", error);
@@ -386,7 +399,7 @@ ${tracker["search"] ? `Semantic search of conversation history: ${tracker["searc
 		participantName: string;
 		query: string;
 	}): Promise<PsychologyAnalysis> {
-		const my_peer = honcho.peer(this.agentName);
+		const my_peer = await honcho.peer(this.agentName);
 		const response = await my_peer.chat(args.query, {
 			sessionId: this.sessionId || undefined,
 			target: args.participantName,

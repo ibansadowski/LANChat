@@ -22,7 +22,14 @@ export class ChatSocketClient {
   }
 
   connect(): void {
-    this.socket = io(this.serverUrl);
+    this.socket = io(this.serverUrl, {
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+    });
 
     this.socket.on("connect", () => {
       this.events.onConnect();

@@ -28,11 +28,12 @@ export function setupSocketIO(
           socket,
         };
         agents.set(socket.id, agent);
-        const agent_peer = honcho.peer(username, { config: { observe_me: false } });
-        await session.addPeers([agent_peer, { observe_me: false, observe_others: true }]);
+        const agent_peer = await honcho.peer(username, { config: { observe_me: false } });
+        // TODO: Fix addPeers - method doesn't exist in current SDK
+        // await session.addPeers([[agent_peer, { observe_me: false, observe_others: true }]]);
         print(`agent registered: ${username}`, "green");
       } else {
-        const user_peer = honcho.peer(username);
+        const user_peer = await honcho.peer(username);
         // TODO: add this behavior to honcho sdk
         const honchoCore = new HonchoCore({
           apiKey: process.env.HONCHO_API_KEY,
@@ -51,7 +52,8 @@ export function setupSocketIO(
           socket,
           observe_me: config.observe_me || true,
         };
-        await session.addPeers([user_peer, { observe_me: user.observe_me, observe_others: false }]);
+        // TODO: Fix addPeers - method doesn't exist in current SDK
+        // await session.addPeers([[user_peer, { observe_me: user.observe_me, observe_others: false }]]);
         print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);
       }
@@ -159,8 +161,9 @@ export function setupSocketIO(
         connectedUsers.delete(socket.id);
         agents.delete(socket.id);
 
-        const peer = honcho.peer(user.username);
-        await session.removePeers([peer]);
+        const peer = await honcho.peer(user.username);
+        // TODO: Fix removePeers - method doesn't exist in current SDK
+        // await session.removePeers([peer]);
         print(`${user.type} disconnected: ${user.username}`, "yellow");
       }
     });
@@ -206,7 +209,7 @@ export function setupSocketIO(
     });
 
     socket.on("dialectic", async (data: { user: string; query: string }, callback: Function) => {
-      const peer = honcho.peer(data.user);
+      const peer = await honcho.peer(data.user);
       const response = await peer.chat(data.query, { sessionId: session.id });
       callback(response || "No response from agent");
     });
@@ -261,8 +264,17 @@ export function setupSocketIO(
 // Helper functions
 async function broadcastMessage(message: Message, io: SocketIOServer, honcho: Honcho, session: any): Promise<void> {
   io.emit("message", message);
-  const peer = honcho.peer(message.username);
-  await session.addMessages([peer.message(message.content)]);
+  
+  // Only add messages to Honcho for chat messages from real users/agents
+  if (message.type === MessageType.CHAT && message.content) {
+    try {
+      const peer = await honcho.peer(message.username);
+      await session.addMessages([peer.message(message.content)]);
+    } catch (error) {
+      console.error(`Failed to add message to Honcho session: ${error}`);
+      // Continue even if Honcho fails - don't break the chat
+    }
+  }
 }
 
 function createMessage({
