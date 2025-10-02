@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run src/server/index.ts",
+    "monitor": "bun run src/monitor.ts",
     "dev": "bun --watch src/server/index.ts",
     "client": "bun run src/client/terminal-client.ts",
     "agent": "bun run src/agent.ts",
