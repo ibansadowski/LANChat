@@ -23,8 +23,8 @@ const SERVER_URL = serverArg
 const MODEL: string = Bun.env.MODEL || "llama3.1:8b";
 
 const honcho = new Honcho({
-	environment: "production",
-	apiKey: process.env.HONCHO_API_KEY!,
+	baseURL: "http://localhost:8000",
+	// apiKey: process.env.HONCHO_API_KEY,
 	workspaceId: process.env.HONCHO_WORKSPACE_ID!,
 });
 
@@ -376,9 +376,7 @@ Please respond naturally as ${this.agentName}.`,
 			// Debug logging
 			console.log("Ollama response:", JSON.stringify(response, null, 2));
 
-			// Handle tool calls if any
-			// No tools used, send the direct response
-			const responseContent = response.message?.content?.trim() || response.response?.trim();
+			const responseContent = response.message?.content?.trim()
 			
 			if (!responseContent) {
 				console.error("Empty response from Ollama - full response:", response);
@@ -393,33 +391,6 @@ Please respond naturally as ${this.agentName}.`,
 		} catch (error) {
 			console.error("Error generating response:", error);
 		}
-	}
-
-	private async analyzeParticipant(args: {
-		participantName: string;
-		query: string;
-	}): Promise<PsychologyAnalysis> {
-		const my_peer = await honcho.peer(this.agentName);
-		const response = await my_peer.chat(args.query, {
-			sessionId: this.sessionId || undefined,
-			target: args.participantName,
-		});
-
-		console.log("============== ANALYSIS ==============");
-		console.log("Query: ", args.query);
-		console.log(response);
-		console.log("============== ANALYSIS COMPLETE ==============");
-
-		if (response === null) {
-			return {
-				participant: args.participantName,
-				response: `No information found for query: ${args.query}`,
-			};
-		}
-		return {
-			participant: args.participantName,
-			response: response,
-		};
 	}
 
 	disconnect(): void {

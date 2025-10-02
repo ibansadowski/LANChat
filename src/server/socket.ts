@@ -1,5 +1,5 @@
 import { Server as SocketIOServer } from "socket.io";
-import { Honcho } from "@honcho-ai/sdk";
+import { Honcho, Session, SessionPeerConfig } from "@honcho-ai/sdk";
 import { Honcho as HonchoCore } from "@honcho-ai/core";
 import type { Message, User, Agent } from "../types.js";
 import { MessageType } from "../types.js";
@@ -11,7 +11,7 @@ export function setupSocketIO(
   agents: Map<string, Agent>,
   chatHistory: Message[],
   honcho: Honcho,
-  session: any
+  session: Session
 ) {
   io.on("connection", (socket) => {
     print(`new connection: ${socket.id}`, "cyan");
@@ -29,22 +29,12 @@ export function setupSocketIO(
         };
         agents.set(socket.id, agent);
         const agent_peer = await honcho.peer(username, { config: { observe_me: false } });
-        // TODO: Fix addPeers - method doesn't exist in current SDK
-        // await session.addPeers([[agent_peer, { observe_me: false, observe_others: true }]]);
+        await session.addPeers([[agent_peer, new SessionPeerConfig(false, true)]]);
         print(`agent registered: ${username}`, "green");
       } else {
         const user_peer = await honcho.peer(username);
-        // TODO: add this behavior to honcho sdk
-        const honchoCore = new HonchoCore({
-          apiKey: process.env.HONCHO_API_KEY,
-          environment: "production",
-        });
-        let config = null;
-        try {
-          config = await honchoCore.workspaces.sessions.peers.getConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, username);
-        } catch {
-          config = { observe_me: true, observe_others: false };
-        }
+        // get the user's existing config if it exists
+        const config = await user_peer.getPeerConfig() as Record<string, boolean>;
         const user: User = {
           id: socket.id,
           username,
@@ -52,8 +42,7 @@ export function setupSocketIO(
           socket,
           observe_me: config.observe_me || true,
         };
-        // TODO: Fix addPeers - method doesn't exist in current SDK
-        // await session.addPeers([[user_peer, { observe_me: user.observe_me, observe_others: false }]]);
+        await session.addPeers([[user_peer, new SessionPeerConfig(null, false)]]);
         print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);
       }
@@ -162,8 +151,7 @@ export function setupSocketIO(
         agents.delete(socket.id);
 
         const peer = await honcho.peer(user.username);
-        // TODO: Fix removePeers - method doesn't exist in current SDK
-        // await session.removePeers([peer]);
+        await session.removePeers([peer]);
         print(`${user.type} disconnected: ${user.username}`, "yellow");
       }
     });
@@ -226,16 +214,8 @@ export function setupSocketIO(
       connectedUsers.set(socket.id, user);
 
       try {
-        // TODO: add this behavior to honcho sdk
-        try {
-          const honchoCore = new HonchoCore({
-            apiKey: process.env.HONCHO_API_KEY,
-            environment: "production",
-          });
-          await honchoCore.workspaces.sessions.peers.setConfig(process.env.HONCHO_WORKSPACE_ID!, session.id, user.username, { observe_me: newObserveStatus, observe_others: false });
-        } catch {
-          // Ignore error
-        }
+        const user_peer = await honcho.peer(user.username);
+        await user_peer.setPeerConfig({ observe_me: newObserveStatus, observe_others: false });
 
         const statusMessage = createMessage({
           type: MessageType.SYSTEM,

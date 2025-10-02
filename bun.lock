@@ -4,7 +4,7 @@
     "": {
       "name": "groupchat",
       "dependencies": {
-        "@honcho-ai/sdk": "^1.3.0",
+        "@honcho-ai/sdk": "^1.4.1",
         "chalk": "^5.4.1",
         "hono": "^4.8.5",
         "ollama": "^0.5.16",
@@ -21,9 +21,9 @@
     },
   },
   "packages": {
-    "@honcho-ai/core": ["@honcho-ai/core@1.3.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-yhxpZ00sQhO24PrHoTlj1cwR1q7/8FKSFZoCImqsFFmdERiXtE74YXhhfqzseyuShu1WfM7IwD8T2oCOB3hu7A=="],
+    "@honcho-ai/core": ["@honcho-ai/core@1.4.1-alpha.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-cRp3ug8cBe9E7NZDgCXkI0EHIgm8x5Jq/nQB0xA5629GuniS99yq6M786I//FjOZhB2YEZoOxd4Zkg412uk5Yg=="],
 
-    "@honcho-ai/sdk": ["@honcho-ai/sdk@1.3.0", "", { "dependencies": { "@honcho-ai/core": "1.3.0", "@types/node": "^24.0.1", "zod": "4.0.0" } }, "sha512-vOUjxQ77bgrVlp2EOpBsbcfmyal4XclTKhnuI/M9X75M7NRt+kOwjwI91I5OrPx/NUE8eyYJj7I9W6xJ0y3PFA=="],
+    "@honcho-ai/sdk": ["@honcho-ai/sdk@1.4.1", "", { "dependencies": { "@honcho-ai/core": "^1.4.1-alpha.0", "@types/node": "^24.0.1", "zod": "4.0.0" } }, "sha512-t6DaHFtkW5ZoayELk9nXqZAcecmeTgxoanzEUe9H0mHmK8biQ9B7zmWR0uCw0gxP4rRszQ1SFF/KETeBA8JuRg=="],
 
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
 

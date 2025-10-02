@@ -10,7 +10,6 @@ export interface Command {
 export const commands: Command[] = [
   { value: '/help', label: '/help', description: 'Show available commands' },
   { value: '/users', label: '/users', description: 'List connected users and agents' },
-  { value: '/history', label: '/history [n]', description: 'Show last n messages (default: 20)' },
   { value: '/dialectic', label: '/dialectic <user> <query>', description: 'Query participant psychology' },
   { value: '/observe', label: '/observe', description: 'Toggle your observation status in the session' },
   { value: '/quit', label: '/quit', description: 'Exit the chat' },
