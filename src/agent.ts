@@ -22,12 +22,6 @@ const SERVER_URL = serverArg
 
 const MODEL: string = Bun.env.MODEL || "llama3.1:8b";
 
-const honcho = new Honcho({
-	baseURL: "http://localhost:8000",
-	// apiKey: process.env.HONCHO_API_KEY,
-	workspaceId: process.env.HONCHO_WORKSPACE_ID!,
-});
-
 class ChatAgent {
 	protected socket: Socket | null = null;
 	protected agentName: string;
@@ -37,9 +31,18 @@ class ChatAgent {
 	protected responseLength: number = 100;
 	protected sessionId: string | null = null;
 
+	protected honcho: Honcho;
+
 	constructor(agentName: string, systemPrompt?: string) {
 		this.agentName = agentName;
 		this.ollama = new Ollama({ host: "http://localhost:11434" });
+
+		this.honcho = new Honcho({
+			baseURL: "http://localhost:8000",
+			// apiKey: process.env.HONCHO_API_KEY,
+			workspaceId: agentName,
+		});
+
 		this.systemPrompt =
 			systemPrompt ||
 			`You are ${agentName}, a participant in a group chat. 
@@ -101,13 +104,13 @@ Feel empowered to be chatty and ask follow-up questions.
 	}
 
 	private async processMessage(message: Message): Promise<void> {
+		const session = await this.honcho.session(this.sessionId || "");
+		const senderPeer = await this.honcho.peer(message.username);
 		// Build context
-		const session = await honcho.session(this.sessionId || "");
-		const context = await session.getContext({ tokens: 5000 });
-		const recentContext: string =
-			context.summary +
-			"\n\n" +
-			context.toOpenAI(this.agentName).slice(-5).join("\n");
+		const context = await session.getContext({ summary: true, tokens: 5000, lastUserMessage: message.content, peerTarget: message.username });
+		const recentContext: string = context.toOpenAI(this.agentName).join("\n");
+		// add message to honcho
+		session.addMessages([senderPeer.message(message.content)]);
 		// State 1: Decide if we should respond
 		const decision = await this.shouldRespond(message, recentContext);
 		console.log(
@@ -118,9 +121,7 @@ Feel empowered to be chatty and ask follow-up questions.
 			return;
 		}
 
-		const action = await this.decideAction(message, recentContext, {});
-
-		// State 2: Generate response with tools
+		await this.decideAction(message, recentContext, {});
 	}
 
 	private async decideAction(
@@ -136,18 +137,18 @@ Feel empowered to be chatty and ask follow-up questions.
 				model: MODEL,
 				prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
-Recent conversation:
+Recent conversation, summary, and/or peer information:
 ${recentContext}
 
 Latest message from ${message.username}: "${message.content}"
 
 You have 3 different tools you can use to gather more context before responding. They are
 
-1. Analyze the psychology - This let's you ask a question to a model of an agent to better understand them and learn how to respond appropriately
+1. Analyze the psychology - This lets you ask a question to a model of an agent to better understand them and learn how to respond appropriately
 
-2. Search for additional context - This let's you search the conversation history with a query 
+2. Search for additional context - This lets you search the conversation history with a query 
 
-3. Respond directly - This let's you respond directly to the user
+3. Respond directly - This lets you respond directly to the user
 
 Respond with a JSON object with this exact format:
 {
@@ -175,6 +176,7 @@ JSON response:`,
 					message,
 					recentContext,
 				);
+				console.log("Psychology response:", psychologyResponse);
 				tracker["psychology"] = psychologyResponse;
 				this.decideAction(message, recentContext, tracker);
 			} else if (
@@ -213,7 +215,7 @@ JSON response:`,
 				model: MODEL,
 				prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
-Recent conversation:
+Recent conversation, summary, and/or peer information:
 ${recentContext}
 
 Latest message from ${message.username}: "${message.content}"
@@ -283,7 +285,7 @@ JSON response:`,
 
 			const search = JSON.parse(response.response) as Search;
 
-			const session = await honcho.session(this.sessionId || "");
+			const session = await this.honcho.session(this.sessionId || "");
 			const semanticResponse = await session.search(search.query);
 
 			return semanticResponse;
@@ -324,7 +326,7 @@ JSON response:`,
 
 			const dialectic = JSON.parse(response.response) as Dialectic;
 
-			const peer = await honcho.peer(this.agentName);
+			const peer = await this.honcho.peer(this.agentName);
 			const dialecticResponse = await peer.chat(dialectic.question, {
 				sessionId: this.sessionId || undefined,
 				target: dialectic.target,
@@ -351,7 +353,7 @@ JSON response:`,
 				},
 				{
 					role: "user",
-					content: `Recent conversation:
+					content: `Recent conversation, summary, and/or peer information:
 ${recentContext}
 
 ${message.username} said: "${message.content}"
@@ -388,6 +390,10 @@ Please respond naturally as ${this.agentName}.`,
 			this.socket!.emit("chat", {
 				content: responseContent,
 			});
+			// save our own message to honcho
+			const session = await this.honcho.session(this.sessionId || "");
+			const peer = await this.honcho.peer(this.agentName);
+			session.addMessages([peer.message(responseContent)]);
 		} catch (error) {
 			console.error("Error generating response:", error);
 		}

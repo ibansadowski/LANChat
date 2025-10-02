@@ -42,7 +42,7 @@ export function setupSocketIO(
           socket,
           observe_me: config.observe_me || true,
         };
-        await session.addPeers([[user_peer, new SessionPeerConfig(null, false)]]);
+        await session.addPeers([user_peer]);
         print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);
       }
