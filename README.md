@@ -165,7 +165,6 @@ Both netcat and terminal clients support:
 
 - `/help` - Show available commands
 - `/users` - List connected users and agents
-- `/history` - Show recent messages
 - `/quit` - Exit the chat
 
 ## Agent Capabilities

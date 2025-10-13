@@ -15,8 +15,8 @@ const providedSessionId = sessionFlag !== -1 && sessionFlag + 1 < args.length ? 
 async function startServer() {
   // Initialize Honcho
   const honcho = new Honcho({
-    environment: "production",
-    apiKey: process.env.HONCHO_API_KEY!,
+    baseURL: "http://localhost:8000",
+    // apiKey: process.env.HONCHO_API_KEY,
     workspaceId: process.env.HONCHO_WORKSPACE_ID!,
   });
 
@@ -35,7 +35,7 @@ async function startServer() {
     print("loading existing messages from session...", "yellow");
     try {
       const existingMessagesPage = await session.getMessages();
-      const existingMessages = await existingMessagesPage.data();
+      const existingMessages = existingMessagesPage.items;
 
       for (const msg of existingMessages) {
         const message: Message = {
