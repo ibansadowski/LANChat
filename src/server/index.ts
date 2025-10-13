@@ -5,19 +5,21 @@ import type { Message, User, Agent } from "../types.js";
 import { MessageType } from "../types.js";
 import { createAPIRoutes } from "./api.js";
 import { setupSocketIO } from "./socket.js";
-import { displayStartupInfo, print, generateId } from "./utils.js";
+import { displayStartupInfo, print } from "./utils.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const sessionFlag = args.findIndex(arg => arg === '--session');
-const providedSessionId = sessionFlag !== -1 && sessionFlag + 1 < args.length ? args[sessionFlag + 1] : null;
+const sessionFlag = args.findIndex((arg) => arg === "--session");
+const providedSessionId =
+  sessionFlag !== -1 && sessionFlag + 1 < args.length
+    ? args[sessionFlag + 1]
+    : null;
 
 async function startServer() {
   // Initialize Honcho
   const honcho = new Honcho({
-    baseURL: "http://localhost:8000",
-    // apiKey: process.env.HONCHO_API_KEY,
-    workspaceId: process.env.HONCHO_WORKSPACE_ID!,
+    baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
+    workspaceId: process.env.HONCHO_WORKSPACE_ID || "default",
   });
 
   // Create or use existing session
@@ -70,7 +72,7 @@ async function startServer() {
         new Request(`http://localhost${req.url}`, {
           method: req.method,
           headers: req.headers as any,
-        })
+        }),
       );
 
       res.statusCode = response.status;
@@ -108,3 +110,4 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
+

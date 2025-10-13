@@ -10,7 +10,7 @@ interface PeerRepInfo {
 async function startVisualization() {
   // Initialize Honcho with local SDK
   const honcho = new Honcho({
-    baseURL: "http://localhost:8000",
+    baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
     workspaceId: process.env.HONCHO_WORKSPACE_ID || "default",
   });
 
@@ -34,7 +34,9 @@ async function startVisualization() {
         // Move cursor to top
         process.stdout.write("\x1b[H");
         console.log(chalk.bold.red("No sessions found in workspace"));
-        console.log(chalk.gray("\nWaiting for session... Press Ctrl+C to exit"));
+        console.log(
+          chalk.gray("\nWaiting for session... Press Ctrl+C to exit"),
+        );
         return;
       }
 
@@ -44,7 +46,9 @@ async function startVisualization() {
         // Move cursor to top
         process.stdout.write("\x1b[H");
         console.log(chalk.bold.red("No session found in workspace"));
-        console.log(chalk.gray("\nWaiting for session... Press Ctrl+C to exit"));
+        console.log(
+          chalk.gray("\nWaiting for session... Press Ctrl+C to exit"),
+        );
         return;
       }
 
@@ -93,11 +97,14 @@ async function startVisualization() {
         displayPeerVisualization(peerRep);
       }
 
-      console.log(chalk.gray(`Last updated: ${new Date().toLocaleTimeString()}... Press Ctrl+C to exit`));
+      console.log(
+        chalk.gray(
+          `Last updated: ${new Date().toLocaleTimeString()}... Press Ctrl+C to exit`,
+        ),
+      );
 
       // Clear any remaining lines from previous render
       process.stdout.write("\x1b[J");
-
     } catch (error) {
       console.error(chalk.red(`Error: ${error}`));
     }
