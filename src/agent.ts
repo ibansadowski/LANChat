@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { io, type Socket } from "socket.io-client";
-import { Ollama } from "ollama";
 import { Honcho } from "@honcho-ai/sdk";
 import type {
   Message,
@@ -20,12 +19,17 @@ const SERVER_URL = serverArg
   ? serverArg.split("=")[1]
   : Bun.env.CHAT_SERVER || "http://localhost:3000";
 
-const MODEL: string = Bun.env.MODEL || "llama3.1:8b";
+const MODEL: string = Bun.env.MODEL || "google/gemini-flash-1.5";
+const OPENROUTER_API_KEY = Bun.env.OPENROUTER_API_KEY;
+
+if (!OPENROUTER_API_KEY) {
+  console.error("ERROR: OPENROUTER_API_KEY environment variable is required");
+  process.exit(1);
+}
 
 class ChatAgent {
   protected socket: Socket | null = null;
   protected agentName: string;
-  protected ollama: Ollama;
   protected systemPrompt: string;
   protected temperature: number = 0.7;
   protected responseLength: number = 100;
@@ -35,23 +39,47 @@ class ChatAgent {
 
   constructor(agentName: string, systemPrompt?: string) {
     this.agentName = agentName;
-    this.ollama = new Ollama({ host: "http://localhost:11434" });
 
     this.honcho = new Honcho({
       baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
-      // apiKey: process.env.HONCHO_API_KEY,
+      apiKey: process.env.HONCHO_API_KEY,
       workspaceId: agentName,
     });
 
     this.systemPrompt =
       systemPrompt ||
-      `You are ${agentName}, a participant in a group chat. 
+      `You are ${agentName}, a participant in a group chat.
 You have access to a psychology analysis tool that can help you understand participants better.
 Use it when you think it would help you provide a more insights on how to appropriately respond to something.
 Respond naturally and conversationally. Keep responses concise.
 
 Feel empowered to be chatty and ask follow-up questions.
 `;
+  }
+
+  // Helper method to call OpenRouter API
+  protected async callOpenRouter(messages: Array<{role: string, content: string}>, options: {temperature?: number, max_tokens?: number, format?: string} = {}): Promise<string> {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages,
+        temperature: options.temperature ?? this.temperature,
+        max_tokens: options.max_tokens ?? this.responseLength + 50,
+        response_format: options.format === "json" ? { type: "json_object" } : undefined,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter API error: ${response.status} ${await response.text()}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
   }
 
   async connect(): Promise<void> {
@@ -104,22 +132,32 @@ Feel empowered to be chatty and ask follow-up questions.
   }
 
   private async processMessage(message: Message): Promise<void> {
+    console.log(`\n📡 API: Getting session ${this.sessionId}`);
     const session = await this.honcho.session(this.sessionId || "");
+
+    console.log(`📡 API: Getting peer ${message.username}`);
     const senderPeer = await this.honcho.peer(message.username);
+
     // Build context
+    console.log(`📡 API: Getting context (tokens: 5000, peer: ${message.username})`);
     const context = await session.getContext({
       summary: true,
       tokens: 5000,
       lastUserMessage: message.content,
       peerTarget: message.username,
     });
-    const recentContext: string = context.toOpenAI(this.agentName).join("\n");
+    const contextMessages = context.toOpenAI(this.agentName);
+    const recentContext: string = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
+    console.log(`📦 Context (${contextMessages.length} messages):\n${recentContext.substring(0, 300)}...`);
+
     // add message to honcho
+    console.log(`📡 API: Adding message from ${message.username} to Honcho`);
     session.addMessages([senderPeer.message(message.content)]);
+
     // State 1: Decide if we should respond
     const decision = await this.shouldRespond(message, recentContext);
     console.log(
-      `🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason}`,
+      `🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason} (confidence: ${decision.confidence})`,
     );
 
     if (!decision.should_respond) {
@@ -138,9 +176,10 @@ Feel empowered to be chatty and ask follow-up questions.
     // search for additional context
     // response directly
     try {
-      const response = await this.ollama.generate({
-        model: MODEL,
-        prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
+      const responseText = await this.callOpenRouter([
+        {
+          role: "user",
+          content: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
 Recent conversation, summary, and/or peer information:
 ${recentContext}
@@ -151,7 +190,7 @@ You have 3 different tools you can use to gather more context before responding.
 
 1. Analyze the psychology - This lets you ask a question to a model of an agent to better understand them and learn how to respond appropriately
 
-2. Search for additional context - This lets you search the conversation history with a query 
+2. Search for additional context - This lets you search the conversation history with a query
 
 3. Respond directly - This lets you respond directly to the user
 
@@ -163,15 +202,11 @@ Respond with a JSON object with this exact format:
 }
 
 JSON response:`,
-        format: "json",
-        options: {
-          temperature: 0.3,
-          num_predict: 100,
         },
-      });
+      ], { temperature: 0.3, max_tokens: 100, format: "json" });
 
       // Parse the response
-      const decision = JSON.parse(response.response) as AgentDecision;
+      const decision = JSON.parse(responseText) as AgentDecision;
 
       if (
         decision.decision === "psychology" &&
@@ -216,9 +251,10 @@ JSON response:`,
     recentContext: string,
   ): Promise<ResponseDecision> {
     try {
-      const response = await this.ollama.generate({
-        model: MODEL,
-        prompt: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
+      const responseText = await this.callOpenRouter([
+        {
+          role: "user",
+          content: `You are ${this.agentName} in a group chat. Based on the recent conversation and the latest message, decide if you should respond.
 
 Recent conversation, summary, and/or peer information:
 ${recentContext}
@@ -241,15 +277,11 @@ Consider:
 lean on the side of responding and keeping the conversation going
 
 JSON response:`,
-        format: "json",
-        options: {
-          temperature: 0.3,
-          num_predict: 100,
         },
-      });
+      ], { temperature: 0.3, max_tokens: 100, format: "json" });
 
       // Parse the response
-      const decision = JSON.parse(response.response) as ResponseDecision;
+      const decision = JSON.parse(responseText) as ResponseDecision;
       return decision;
     } catch (error) {
       console.error("Error in decision making:", error);
@@ -264,9 +296,10 @@ JSON response:`,
 
   private async search(message: Message, recentContext: string): Promise<any> {
     try {
-      const response = await this.ollama.generate({
-        model: MODEL,
-        prompt: `You are ${this.agentName} in a group chat. You want to search the conversation history to get more context on something.
+      const responseText = await this.callOpenRouter([
+        {
+          role: "user",
+          content: `You are ${this.agentName} in a group chat. You want to search the conversation history to get more context on something.
 
 Recent conversation:
 ${recentContext}
@@ -281,17 +314,15 @@ Respond with a JSON object with this exact format:
 }
 
 JSON response:`,
-        format: "json",
-        options: {
-          temperature: 0.3,
-          num_predict: 100,
         },
-      });
+      ], { temperature: 0.3, max_tokens: 100, format: "json" });
 
-      const search = JSON.parse(response.response) as Search;
+      const search = JSON.parse(responseText) as Search;
 
+      console.log(`📡 API: Semantic search query: "${search.query}"`);
       const session = await this.honcho.session(this.sessionId || "");
       const semanticResponse = await session.search(search.query);
+      console.log(`📦 Search results: ${JSON.stringify(semanticResponse).substring(0, 200)}...`);
 
       return semanticResponse;
     } catch (error) {
@@ -304,16 +335,17 @@ JSON response:`,
     recentContext: string,
   ): Promise<any> {
     try {
-      const response = await this.ollama.generate({
-        model: MODEL,
-        prompt: `You are ${this.agentName} in a group chat. You want to analyze the psychology of a participant more deeply to understand how to best respond.
+      const responseText = await this.callOpenRouter([
+        {
+          role: "user",
+          content: `You are ${this.agentName} in a group chat. You want to analyze the psychology of a participant more deeply to understand how to best respond.
 
 Recent conversation:
 ${recentContext}
 
 Latest message from ${message.username}: "${message.content}"
 
-Decide who you want to ask a question about and what question you want to ask 
+Decide who you want to ask a question about and what question you want to ask
 
 Respond with a JSON object with this exact format:
 {
@@ -322,20 +354,18 @@ Respond with a JSON object with this exact format:
 }
 
 JSON response:`,
-        format: "json",
-        options: {
-          temperature: 0.3,
-          num_predict: 100,
         },
-      });
+      ], { temperature: 0.3, max_tokens: 100, format: "json" });
 
-      const dialectic = JSON.parse(response.response) as Dialectic;
+      const dialectic = JSON.parse(responseText) as Dialectic;
 
+      console.log(`📡 API: Dialectic query - asking about ${dialectic.target}: "${dialectic.question}"`);
       const peer = await this.honcho.peer(this.agentName);
       const dialecticResponse = await peer.chat(dialectic.question, {
         sessionId: this.sessionId || undefined,
         target: dialectic.target,
       });
+      console.log(`📦 Dialectic response: ${dialecticResponse}`);
       return dialecticResponse;
     } catch (error) {
       console.error("Error generating response:", error);
@@ -371,36 +401,27 @@ Please respond naturally as ${this.agentName}.`,
         },
       ];
 
-      const response = await this.ollama.chat({
-        model: MODEL,
-        messages: messages,
-        options: {
-          temperature: this.temperature,
-          num_predict: this.responseLength + 50, // Extra tokens for tool calls
-        },
+      const responseContent = await this.callOpenRouter(messages, {
+        temperature: this.temperature,
+        max_tokens: this.responseLength + 50,
       });
 
-      // Debug logging
-      console.log("Ollama response:", JSON.stringify(response, null, 2));
-
-      const responseContent = response.message?.content?.trim();
-
-      if (!responseContent) {
-        console.error("Empty response from Ollama - full response:", response);
+      if (!responseContent || !responseContent.trim()) {
+        console.error("Empty response from OpenRouter");
         console.error("Model used:", MODEL);
         return;
       }
 
       console.log(
-        `📤 Sending response: ${responseContent.substring(0, 50)}...`,
+        `📤 Sending response: ${responseContent.trim().substring(0, 50)}...`,
       );
       this.socket!.emit("chat", {
-        content: responseContent,
+        content: responseContent.trim(),
       });
       // save our own message to honcho
       const session = await this.honcho.session(this.sessionId || "");
       const peer = await this.honcho.peer(this.agentName);
-      session.addMessages([peer.message(responseContent)]);
+      session.addMessages([peer.message(responseContent.trim())]);
     } catch (error) {
       console.error("Error generating response:", error);
     }
