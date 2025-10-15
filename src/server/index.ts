@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import { Honcho } from "@honcho-ai/sdk";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Message, User, Agent } from "../types.js";
 import { MessageType } from "../types.js";
 import { createAPIRoutes } from "./api.js";
@@ -83,8 +85,35 @@ async function startServer() {
       const body = await response.text();
       res.end(body);
     } else {
-      res.statusCode = 404;
-      res.end("Not Found");
+      // Serve static files from public directory
+      const publicDir = join(process.cwd(), "public");
+      let filePath = join(publicDir, req.url === "/" ? "index.html" : req.url || "");
+
+      // Security: prevent directory traversal
+      if (!filePath.startsWith(publicDir)) {
+        res.statusCode = 403;
+        res.end("Forbidden");
+        return;
+      }
+
+      if (existsSync(filePath)) {
+        const ext = filePath.split(".").pop();
+        const contentTypes: Record<string, string> = {
+          html: "text/html",
+          css: "text/css",
+          js: "application/javascript",
+          json: "application/json",
+          png: "image/png",
+          jpg: "image/jpeg",
+          svg: "image/svg+xml",
+        };
+
+        res.setHeader("Content-Type", contentTypes[ext || "html"] || "text/plain");
+        res.end(readFileSync(filePath));
+      } else {
+        res.statusCode = 404;
+        res.end("Not Found");
+      }
     }
   });
 
