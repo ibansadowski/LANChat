@@ -28,8 +28,9 @@ export function setupSocketIO(
           socket,
         };
         agents.set(socket.id, agent);
-        const agent_peer = await honcho.peer(username, { config: { observe_me: false } });
-        await session.addPeers([[agent_peer, new SessionPeerConfig(false, true)]]);
+        const agent_peer = await honcho.peer(username, { config: { observe_me: false, observe_others: true } });
+        // Agents: observe_others=true (build peer-to-peer models), observe_me=false (don't learn from agent behavior)
+        await session.addPeers([[agent_peer, new SessionPeerConfig(true, false)]]);
         print(`agent registered: ${username}`, "green");
       } else {
         const user_peer = await honcho.peer(username);
@@ -40,9 +41,10 @@ export function setupSocketIO(
           username,
           type: "human",
           socket,
-          observe_me: config.observe_me || true,
+          observe_me: config.observe_me !== undefined ? config.observe_me : true,
         };
-        await session.addPeers([user_peer]);
+        // Users: observe_others=true (build models of other participants), observe_me=true (be modeled)
+        await session.addPeers([[user_peer, new SessionPeerConfig(true, user.observe_me)]]);
         print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);
       }

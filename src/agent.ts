@@ -159,9 +159,16 @@ Feel empowered to be chatty and ask follow-up questions.
     const recentContext: string = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
     console.log(`📦 Context (${contextMessages.length} messages):\n${recentContext.substring(0, 300)}...`);
 
-    // add message to honcho
+    // add message to honcho with metadata
     console.log(`📡 API: Adding message from ${message.username} to Honcho`);
-    session.addMessages([senderPeer.message(message.content)]);
+    await session.addMessages([
+      senderPeer.message(message.content, {
+        metadata: {
+          message_type: "user_message",
+          processed_by: this.agentName
+        }
+      })
+    ]);
 
     // State 1: Decide if we should respond
     const decision = await this.shouldRespond(message, recentContext);
@@ -438,10 +445,21 @@ Please respond naturally as ${this.agentName}.`,
           agentDecisions: decisionLog
         }
       });
-      // save our own message to honcho
+      // save our own message to honcho with rich metadata
       const session = await this.honcho.session(this.sessionId || "");
       const peer = await this.honcho.peer(this.agentName);
-      session.addMessages([peer.message(responseContent.trim())]);
+      await session.addMessages([
+        peer.message(responseContent.trim(), {
+          metadata: {
+            message_type: "agent_response",
+            decision_tree: decisionLog,
+            tools_used: Object.keys(tracker),
+            context_tokens: contextMessages.length,
+            response_to_message_id: message.id,
+            response_to_user: message.username
+          }
+        })
+      ]);
     } catch (error) {
       console.error("Error generating response:", error);
     }
