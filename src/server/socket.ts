@@ -244,7 +244,7 @@ export function setupSocketIO(
 // Helper functions
 async function broadcastMessage(message: Message, io: SocketIOServer, honcho: Honcho, session: any): Promise<void> {
   io.emit("message", message);
-  
+
   // Only add messages to Honcho for chat messages from real users/agents
   if (message.type === MessageType.CHAT && message.content) {
     try {

@@ -36,6 +36,8 @@ class ChatAgent {
   protected sessionId: string | null = null;
 
   protected honcho: Honcho;
+  protected maxRetries: number = 3;
+  protected retryDelay: number = 1000;
 
   constructor(agentName: string, systemPrompt?: string) {
     this.agentName = agentName;
@@ -86,12 +88,17 @@ Feel empowered to be chatty and ask follow-up questions.
     console.log(`🤖 ${this.agentName} connecting to ${SERVER_URL}...`);
 
     this.socket = io(SERVER_URL, {
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 20000,
+      timeout: 60000,
+      // Force new connection
+      forceNew: false,
+      // Longer timeouts for Honcho API calls
+      pingInterval: 30000,
+      pingTimeout: 120000,
     });
 
     this.socket.on("connect", () => {
@@ -132,6 +139,8 @@ Feel empowered to be chatty and ask follow-up questions.
   }
 
   private async processMessage(message: Message): Promise<void> {
+    const decisionLog: any[] = [];
+
     console.log(`\n📡 API: Getting session ${this.sessionId}`);
     const session = await this.honcho.session(this.sessionId || "");
 
@@ -156,6 +165,7 @@ Feel empowered to be chatty and ask follow-up questions.
 
     // State 1: Decide if we should respond
     const decision = await this.shouldRespond(message, recentContext);
+    decisionLog.push({ type: 'should_respond', ...decision, timestamp: new Date().toISOString() });
     console.log(
       `🤔 Decision: ${decision.should_respond ? "Yes" : "No"} - ${decision.reason} (confidence: ${decision.confidence})`,
     );
@@ -164,13 +174,14 @@ Feel empowered to be chatty and ask follow-up questions.
       return;
     }
 
-    await this.decideAction(message, recentContext, {});
+    await this.decideAction(message, recentContext, {}, decisionLog);
   }
 
   private async decideAction(
     message: Message,
     recentContext: string,
     tracker: Record<string, any>,
+    decisionLog: any[],
   ): Promise<void> {
     // analyze psychology
     // search for additional context
@@ -207,6 +218,7 @@ JSON response:`,
 
       // Parse the response
       const decision = JSON.parse(responseText) as AgentDecision;
+      decisionLog.push({ type: 'action_decision', ...decision, timestamp: new Date().toISOString() });
 
       if (
         decision.decision === "psychology" &&
@@ -218,7 +230,8 @@ JSON response:`,
         );
         console.log("Psychology response:", psychologyResponse);
         tracker["psychology"] = psychologyResponse;
-        this.decideAction(message, recentContext, tracker);
+        decisionLog.push({ type: 'psychology_result', response: psychologyResponse, timestamp: new Date().toISOString() });
+        this.decideAction(message, recentContext, tracker, decisionLog);
       } else if (
         decision.decision === "search" &&
         tracker["search"] === undefined
@@ -235,9 +248,10 @@ JSON response:`,
           messages.push(searchResponse);
         }
         tracker["search"] = messages;
-        this.decideAction(message, recentContext, tracker);
+        decisionLog.push({ type: 'search_result', results: messages.length, timestamp: new Date().toISOString() });
+        this.decideAction(message, recentContext, tracker, decisionLog);
       } else {
-        await this.generateResponse(message, recentContext, tracker);
+        await this.generateResponse(message, recentContext, tracker, decisionLog);
       }
     } catch (error) {
       console.error("Error in decision making:", error);
@@ -376,6 +390,7 @@ JSON response:`,
     message: Message,
     recentContext: string,
     tracker: Record<string, any>,
+    decisionLog: any[],
   ): Promise<void> {
     try {
       console.log(`💭 Generating response...`);
@@ -412,11 +427,16 @@ Please respond naturally as ${this.agentName}.`,
         return;
       }
 
+      decisionLog.push({ type: 'response_generated', preview: responseContent.trim().substring(0, 100), timestamp: new Date().toISOString() });
+
       console.log(
         `📤 Sending response: ${responseContent.trim().substring(0, 50)}...`,
       );
       this.socket!.emit("chat", {
         content: responseContent.trim(),
+        metadata: {
+          agentDecisions: decisionLog
+        }
       });
       // save our own message to honcho
       const session = await this.honcho.session(this.sessionId || "");

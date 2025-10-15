@@ -5,6 +5,7 @@
 		messages,
 		users,
 		agents,
+		agentDecisions,
 		sessionId,
 		connectionStatus,
 		addMessage,
@@ -21,42 +22,56 @@
 	let socket: Socket | null = null;
 	let socketClient = createSocketClient();
 	let messageInput = $state('');
-	let messagesContainer: HTMLDivElement | undefined;
-
-	// Reactive state using $state
-	let currentMessages = $state<Message[]>([]);
-	let currentUsers = $state<User[]>([]);
-	let currentAgents = $state<Agent[]>([]);
-	let connected = $state<'connected' | 'disconnected' | 'connecting' | 'error'>('disconnected');
-	let currentSessionId = $state('');
-
-	// Subscribe to stores
-	$effect(() => {
-		const unsubMessages = messages.subscribe(m => { currentMessages = m; });
-		const unsubUsers = users.subscribe(u => { currentUsers = u; });
-		const unsubAgents = agents.subscribe(a => { currentAgents = a; });
-		const unsubStatus = connectionStatus.subscribe(s => { connected = s; });
-		const unsubSession = sessionId.subscribe(s => { currentSessionId = s; });
-
-		return () => {
-			unsubMessages();
-			unsubUsers();
-			unsubAgents();
-			unsubStatus();
-			unsubSession();
-		};
-	});
+	let messagesContainer = $state<HTMLDivElement>();
+	let usernameError = $state('');
+	let usernameSuggestion = $state('');
+	let validatingUsername = $state(false);
+	let contextInfo = $state<{ totalPeers: number; peers: any[] } | null>(null);
 
 	// Auto-scroll messages
 	$effect(() => {
-		if (messagesContainer && currentMessages.length > 0) {
+		if (messagesContainer && $messages.length > 0) {
 			messagesContainer.scrollTop = messagesContainer.scrollHeight;
 		}
 	});
 
-	function joinChat() {
+	async function validateUsername(name: string): Promise<{ valid: boolean; error?: string; sanitized?: string; message?: string }> {
+		const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+
+		try {
+			const response = await fetch(`${backendUrl}/api/validate-username`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username: name })
+			});
+
+			return await response.json();
+		} catch (error) {
+			console.error('Validation error:', error);
+			return { valid: false, error: 'Could not validate username. Server may be offline.' };
+		}
+	}
+
+	async function joinChat() {
 		if (!username.trim()) return;
 
+		usernameError = '';
+		usernameSuggestion = '';
+		validatingUsername = true;
+
+		// Validate username
+		const validation = await validateUsername(username.trim());
+		validatingUsername = false;
+
+		if (!validation.valid) {
+			usernameError = validation.error || 'Invalid username';
+			if (validation.suggestion) {
+				usernameSuggestion = validation.suggestion;
+			}
+			return;
+		}
+
+		// User's username is valid, connect
 		connectionStatus.set('connecting');
 		socket = socketClient.connect(username.trim());
 
@@ -84,8 +99,10 @@
 			addMessage(message);
 
 			// Track agent decisions
-			if (message.metadata?.agentDecision) {
-				addAgentDecision(message.metadata.agentDecision);
+			if (message.metadata?.agentDecisions) {
+				message.metadata.agentDecisions.forEach((decision: any) => {
+					addAgentDecision({ ...decision, agentName: message.username });
+				});
 			}
 		});
 
@@ -112,6 +129,27 @@
 			if (data.agents) updateAgents(data.agents);
 		});
 	}
+
+	async function loadContext() {
+		const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+		try {
+			const response = await fetch(`${backendUrl}/api/context`);
+			if (response.ok) {
+				contextInfo = await response.json();
+			}
+		} catch (error) {
+			console.error('Failed to load context:', error);
+		}
+	}
+
+	// Poll for context updates every 10 seconds
+	$effect(() => {
+		if (isJoined) {
+			loadContext();
+			const interval = setInterval(loadContext, 10000);
+			return () => clearInterval(interval);
+		}
+	});
 
 	function sendMessage() {
 		if (!messageInput.trim() || !socket) return;
@@ -157,16 +195,22 @@
 			<input
 				type="text"
 				bind:value={username}
-				placeholder="Enter your username"
-				onkeydown={(e) => e.key === 'Enter' && joinChat()}
+				placeholder="Enter your username (letters, numbers, _, -)"
+				onkeydown={(e) => e.key === 'Enter' && !validatingUsername && joinChat()}
+				class:error={!!usernameError}
 			/>
-			<button onclick={joinChat} disabled={!username.trim()}>
-				Join Chat
+			<button onclick={joinChat} disabled={!username.trim() || validatingUsername}>
+				{validatingUsername ? 'Checking...' : 'Join Chat'}
 			</button>
 			<div class="status">
-				{#if connected === 'connecting'}
+				{#if usernameError}
+					<span class="error">{usernameError}</span>
+					{#if usernameSuggestion}
+						<span class="suggestion">Try: {usernameSuggestion}</span>
+					{/if}
+				{:else if $connectionStatus === 'connecting'}
 					<span class="connecting">Connecting...</span>
-				{:else if connected === 'error'}
+				{:else if $connectionStatus === 'error'}
 					<span class="error">Connection error</span>
 				{/if}
 			</div>
@@ -177,13 +221,13 @@
 		<!-- Left Sidebar: Users & Agents -->
 		<div class="sidebar">
 			<div class="panel-header">
-				<h2>Participants ({currentUsers.length + currentAgents.length})</h2>
+				<h2>Participants ({$users.length + $agents.length})</h2>
 			</div>
 			<div class="panel-content">
 				<div class="participant-section">
-					<h3>Humans ({currentUsers.length})</h3>
+					<h3>Humans ({$users.length})</h3>
 					<ul class="participant-list">
-						{#each currentUsers as user (user.id)}
+						{#each $users as user (user.id)}
 							<li class="participant user">
 								<span class="indicator"></span>
 								{user.username}
@@ -196,9 +240,9 @@
 				</div>
 
 				<div class="participant-section">
-					<h3>Agents ({currentAgents.length})</h3>
+					<h3>Agents ({$agents.length})</h3>
 					<ul class="participant-list">
-						{#each currentAgents as agent (agent.id)}
+						{#each $agents as agent (agent.id)}
 							<li class="participant agent">
 								<span class="indicator"></span>
 								{agent.username}
@@ -214,13 +258,13 @@
 			<div class="chat-header">
 				<h1>LANChat</h1>
 				<div class="header-info">
-					<span class="status-indicator" class:connected={connected === 'connected'}></span>
-					<span class="session-id">Session: {currentSessionId.substring(0, 8)}...</span>
+					<span class="status-indicator" class:connected={$connectionStatus === 'connected'}></span>
+					<span class="session-id">Session: {$sessionId.substring(0, 8)}...</span>
 				</div>
 			</div>
 
 			<div class="messages" bind:this={messagesContainer}>
-				{#each currentMessages as message (message.id)}
+				{#each $messages as message (message.id)}
 					<div class="message {getMessageClass(message)}">
 						<div class="message-header">
 							<span class="username">{message.username}</span>
@@ -237,9 +281,9 @@
 					bind:value={messageInput}
 					onkeydown={handleKeyPress}
 					placeholder="Type a message..."
-					disabled={connected !== 'connected'}
+					disabled={$connectionStatus !== 'connected'}
 				/>
-				<button onclick={sendMessage} disabled={!messageInput.trim() || connected !== 'connected'}>
+				<button onclick={sendMessage} disabled={!messageInput.trim() || $connectionStatus !== 'connected'}>
 					Send
 				</button>
 			</div>
@@ -253,17 +297,58 @@
 			<div class="panel-content">
 				<div class="insight-section">
 					<h3>Session</h3>
-					<p class="session-full-id">{currentSessionId}</p>
+					<p class="session-full-id">{$sessionId}</p>
 				</div>
 
 				<div class="insight-section">
 					<h3>Agent Activity</h3>
-					<p class="placeholder">Agent decisions will appear here...</p>
+					{#if $agentDecisions.length === 0}
+						<p class="placeholder">Agent decisions will appear here...</p>
+					{:else}
+						<div class="decisions-list">
+							{#each $agentDecisions.slice(-10) as decision (decision.timestamp)}
+								<div class="decision-item">
+									<div class="decision-header">
+										<span class="decision-agent">{decision.agentName}</span>
+										<span class="decision-time">{formatTime(decision.timestamp)}</span>
+									</div>
+									<div class="decision-type">{decision.type.replace(/_/g, ' ')}</div>
+									{#if decision.reason}
+										<div class="decision-reason">{decision.reason}</div>
+									{/if}
+									{#if decision.confidence !== undefined}
+										<div class="decision-confidence">
+											Confidence: {Math.round(decision.confidence * 100)}%
+										</div>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 
 				<div class="insight-section">
-					<h3>Context</h3>
-					<p class="placeholder">Context visualization coming soon...</p>
+					<h3>Honcho Peers</h3>
+					{#if !contextInfo}
+						<p class="placeholder">Loading context...</p>
+					{:else if contextInfo.totalPeers === 0}
+						<p class="placeholder">No peers registered yet</p>
+					{:else}
+						<div class="context-summary">
+							<div class="context-stat">
+								<span class="stat-label">Total Peers:</span>
+								<span class="stat-value">{contextInfo.totalPeers}</span>
+							</div>
+						</div>
+						<div class="peers-list">
+							{#each contextInfo.peers.slice(0, 10) as peer (peer.id)}
+								<div class="peer-item">
+									<div class="peer-id">{peer.id}</div>
+									<div class="peer-date">Joined: {new Date(peer.createdAt).toLocaleDateString()}</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -305,6 +390,10 @@
 		margin-bottom: 1rem;
 	}
 
+	.join-box input.error {
+		border-color: #ff6b6b;
+	}
+
 	.join-box button {
 		width: 100%;
 	}
@@ -320,6 +409,13 @@
 
 	.status .error {
 		color: #ff6b6b;
+	}
+
+	.status .suggestion {
+		display: block;
+		color: var(--accent-primary);
+		font-size: 0.75rem;
+		margin-top: 0.25rem;
 	}
 
 	.chat-header {
@@ -488,5 +584,105 @@
 		font-size: 0.875rem;
 		color: var(--text-dim);
 		font-style: italic;
+	}
+
+	.decisions-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		max-height: 400px;
+		overflow-y: auto;
+	}
+
+	.decision-item {
+		padding: 0.75rem;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		border-left: 3px solid var(--agent-color);
+		font-size: 0.75rem;
+	}
+
+	.decision-header {
+		display: flex;
+		justify-content: space-between;
+		margin-bottom: 0.25rem;
+	}
+
+	.decision-agent {
+		font-weight: 600;
+		color: var(--agent-color);
+	}
+
+	.decision-time {
+		color: var(--text-dim);
+		font-size: 0.625rem;
+	}
+
+	.decision-type {
+		color: var(--accent-primary);
+		text-transform: capitalize;
+		font-weight: 500;
+		margin-bottom: 0.25rem;
+	}
+
+	.decision-reason {
+		color: var(--text-secondary);
+		font-size: 0.688rem;
+		line-height: 1.4;
+		margin-bottom: 0.25rem;
+	}
+
+	.decision-confidence {
+		color: var(--text-dim);
+		font-size: 0.625rem;
+	}
+
+	.context-summary {
+		margin-bottom: 1rem;
+	}
+
+	.context-stat {
+		display: flex;
+		justify-content: space-between;
+		padding: 0.5rem;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		font-size: 0.75rem;
+	}
+
+	.stat-label {
+		color: var(--text-secondary);
+	}
+
+	.stat-value {
+		color: var(--accent-primary);
+		font-weight: 600;
+	}
+
+	.peers-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-height: 300px;
+		overflow-y: auto;
+	}
+
+	.peer-item {
+		padding: 0.5rem;
+		background: var(--bg-tertiary);
+		border-radius: 4px;
+		border-left: 2px solid var(--accent-secondary);
+		font-size: 0.75rem;
+	}
+
+	.peer-id {
+		color: var(--text-primary);
+		font-weight: 500;
+		margin-bottom: 0.25rem;
+	}
+
+	.peer-date {
+		color: var(--text-dim);
+		font-size: 0.625rem;
 	}
 </style>

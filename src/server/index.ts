@@ -65,15 +65,23 @@ async function startServer() {
   const PORT = parseInt(Bun.env.PORT || "3000");
 
   // Create API routes
-  const app = createAPIRoutes(connectedUsers, agents, chatHistory, PORT);
+  const app = createAPIRoutes(connectedUsers, agents, chatHistory, PORT, honcho);
 
   // Create HTTP server
   const server = createServer(async (req, res) => {
     if (req.url?.startsWith("/api/")) {
+      // Read request body
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const bodyBuffer = Buffer.concat(chunks);
+
       const response = await app.fetch(
         new Request(`http://localhost${req.url}`, {
           method: req.method,
           headers: req.headers as any,
+          body: bodyBuffer.length > 0 ? bodyBuffer : undefined,
         }),
       );
 
@@ -117,15 +125,17 @@ async function startServer() {
     }
   });
 
-  // Setup Socket.IO
+  // Setup Socket.IO with longer timeouts for agents making Honcho API calls
   const io = new SocketIOServer(server, {
     cors: {
       origin: "*",
       methods: ["GET", "POST"],
     },
-    pingInterval: 25000,
-    pingTimeout: 60000,
+    pingInterval: 30000,
+    pingTimeout: 120000,
     transports: ["websocket", "polling"],
+    connectTimeout: 60000,
+    upgradeTimeout: 30000,
   });
 
   setupSocketIO(io, connectedUsers, agents, chatHistory, honcho, session);
