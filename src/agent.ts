@@ -45,7 +45,7 @@ class ChatAgent {
     this.honcho = new Honcho({
       baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
       apiKey: process.env.HONCHO_API_KEY,
-      workspaceId: agentName,
+      workspaceId: process.env.HONCHO_WORKSPACE_ID || "default",
     });
 
     this.systemPrompt =
