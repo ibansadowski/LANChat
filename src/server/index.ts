@@ -127,7 +127,8 @@ async function startServer() {
 
   // Setup Socket.IO with longer timeouts for agents making Honcho API calls
   const allowedOrigins = [
-    "https://lanchat.ibansadowski.com",
+    "https://lanchat.ibansadowski.com", 
+    "https://www.lanchat.ibansadowski.com",
     "http://localhost:5173", // Local development
     "http://localhost:4173", // Local preview
   ];
