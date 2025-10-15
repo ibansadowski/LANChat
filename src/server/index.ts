@@ -126,10 +126,26 @@ async function startServer() {
   });
 
   // Setup Socket.IO with longer timeouts for agents making Honcho API calls
+  const allowedOrigins = [
+    "https://lanchat.ibansadowski.com",
+    "http://localhost:5173", // Local development
+    "http://localhost:4173", // Local preview
+  ];
+
   const io = new SocketIOServer(server, {
     cors: {
-      origin: "*",
+      origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
       methods: ["GET", "POST"],
+      credentials: true,
     },
     pingInterval: 30000,
     pingTimeout: 120000,
@@ -140,13 +156,34 @@ async function startServer() {
 
   setupSocketIO(io, connectedUsers, agents, chatHistory, honcho, session);
 
-  // Start server
+  // Start server with error handling
   print("starting LAN chat server...", "blue");
-  server.listen(PORT, () => {
-    print(`server listening on port ${PORT}`, "green");
-    displayStartupInfo(PORT);
+
+  return new Promise<void>((resolve, reject) => {
+    server.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') {
+        print(`Port ${PORT} is already in use. Please stop any conflicting processes or use a different port.`, "red");
+        print(`To find what's using the port, run: lsof -i :${PORT}`, "yellow");
+        process.exit(1);
+      } else if (error.code === 'EACCES') {
+        print(`Permission denied to bind to port ${PORT}. Try using a port above 1024 or run with elevated privileges.`, "red");
+        process.exit(1);
+      } else {
+        print(`Server error: ${error.message}`, "red");
+        reject(error);
+      }
+    });
+
+    server.listen(PORT, () => {
+      print(`server listening on port ${PORT}`, "green");
+      displayStartupInfo(PORT);
+      resolve();
+    });
   });
 }
 
-startServer().catch(console.error);
+startServer().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
+});
 
