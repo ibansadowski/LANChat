@@ -171,6 +171,7 @@
 	}
 
 	function getMessageClass(message: Message): string {
+		if (message.metadata?.userType === 'agent') return 'agent';
 		if (message.type === 'agent_response') return 'agent';
 		if (message.type === 'system' || message.type === 'join' || message.type === 'leave') return 'system';
 		return 'user';
