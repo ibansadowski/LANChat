@@ -45,7 +45,7 @@ class ChatAgent {
     this.honcho = new Honcho({
       baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
       apiKey: process.env.HONCHO_API_KEY,
-      workspaceId: agentName,
+      workspaceId: process.env.HONCHO_WORKSPACE_ID || "default",
     });
 
     this.systemPrompt =
@@ -159,9 +159,16 @@ Feel empowered to be chatty and ask follow-up questions.
     const recentContext: string = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
     console.log(`📦 Context (${contextMessages.length} messages):\n${recentContext.substring(0, 300)}...`);
 
-    // add message to honcho
+    // add message to honcho with metadata
     console.log(`📡 API: Adding message from ${message.username} to Honcho`);
-    session.addMessages([senderPeer.message(message.content)]);
+    await session.addMessages([
+      senderPeer.message(message.content, {
+        metadata: {
+          message_type: "user_message",
+          processed_by: this.agentName
+        }
+      })
+    ]);
 
     // State 1: Decide if we should respond
     const decision = await this.shouldRespond(message, recentContext);
@@ -174,7 +181,7 @@ Feel empowered to be chatty and ask follow-up questions.
       return;
     }
 
-    await this.decideAction(message, recentContext, {}, decisionLog);
+    await this.decideAction(message, recentContext, { contextMessages }, decisionLog);
   }
 
   private async decideAction(
@@ -265,6 +272,23 @@ JSON response:`,
     recentContext: string,
   ): Promise<ResponseDecision> {
     try {
+      // Quick check: if message explicitly addresses another agent, don't respond
+      const otherAgentPattern = /(@?\w+bot)\b/gi;
+      const matches = message.content.match(otherAgentPattern);
+      if (matches) {
+        const mentionedAgents = matches.map(m => m.replace('@', '').toLowerCase());
+        const myNameLower = this.agentName.toLowerCase();
+
+        // If other agents are mentioned but not me, don't respond
+        if (mentionedAgents.length > 0 && !mentionedAgents.includes(myNameLower)) {
+          return {
+            should_respond: false,
+            reason: `Message addressed to other agent(s): ${matches.join(', ')}`,
+            confidence: 1.0
+          };
+        }
+      }
+
       const responseText = await this.callOpenRouter([
         {
           role: "user",
@@ -287,8 +311,9 @@ Consider:
 - Is it a question that needs answering?
 - Would your response add value to the conversation?
 - Have you responded too much recently?
+- If the message mentions another specific agent's name, you should probably stay quiet
 
-lean on the side of responding and keeping the conversation going
+lean on the side of responding and keeping the conversation going, but not if someone else is being addressed
 
 JSON response:`,
         },
@@ -438,10 +463,21 @@ Please respond naturally as ${this.agentName}.`,
           agentDecisions: decisionLog
         }
       });
-      // save our own message to honcho
+      // save our own message to honcho with rich metadata
       const session = await this.honcho.session(this.sessionId || "");
       const peer = await this.honcho.peer(this.agentName);
-      session.addMessages([peer.message(responseContent.trim())]);
+      await session.addMessages([
+        peer.message(responseContent.trim(), {
+          metadata: {
+            message_type: "agent_response",
+            decision_tree: decisionLog,
+            tools_used: Object.keys(tracker).filter(k => k !== 'contextMessages'),
+            context_tokens: tracker.contextMessages?.length || 0,
+            response_to_message_id: message.id,
+            response_to_user: message.username
+          }
+        })
+      ]);
     } catch (error) {
       console.error("Error generating response:", error);
     }
