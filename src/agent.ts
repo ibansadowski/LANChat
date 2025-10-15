@@ -38,9 +38,13 @@ class ChatAgent {
   protected honcho: Honcho;
   protected maxRetries: number = 3;
   protected retryDelay: number = 1000;
+  protected lastMessageTime: number = Date.now();
+  protected autonomousMode: boolean = true;
+  protected autonomousInterval: number = 30000; // 30 seconds
 
-  constructor(agentName: string, systemPrompt?: string) {
+  constructor(agentName: string, systemPrompt?: string, autonomousMode: boolean = true) {
     this.agentName = agentName;
+    this.autonomousMode = autonomousMode;
 
     this.honcho = new Honcho({
       baseURL: process.env.HONCHO_BASE_URL || "http://localhost:8000",
@@ -56,6 +60,7 @@ Use it when you think it would help you provide a more insights on how to approp
 Respond naturally and conversationally. Keep responses concise.
 
 Feel empowered to be chatty and ask follow-up questions.
+${autonomousMode ? "\n\nYou are autonomous and proactive - feel free to initiate conversations, share thoughts, and keep things lively!" : ""}
 `;
   }
 
@@ -128,6 +133,7 @@ Feel empowered to be chatty and ask follow-up questions.
     this.socket.on("message", async (message: Message) => {
       // Only process chat messages from others
       if (message.type === "chat" && message.username !== this.agentName) {
+        this.lastMessageTime = Date.now();
         await this.processMessage(message);
       }
     });
@@ -135,7 +141,131 @@ Feel empowered to be chatty and ask follow-up questions.
     // Receive session id from server
     this.socket.on("session_id", (sessionId: string) => {
       this.sessionId = sessionId;
+
+      // Start autonomous behavior loop if enabled
+      if (this.autonomousMode) {
+        this.startAutonomousBehavior();
+      }
     });
+  }
+
+  private startAutonomousBehavior(): void {
+    console.log(`🤖 ${this.agentName} autonomous mode activated`);
+
+    // Check periodically if agent should say something
+    setInterval(async () => {
+      const timeSinceLastMessage = Date.now() - this.lastMessageTime;
+
+      // If chat has been quiet for a while, consider saying something
+      if (timeSinceLastMessage > this.autonomousInterval) {
+        await this.considerProactiveMessage();
+      }
+    }, this.autonomousInterval);
+  }
+
+  private async considerProactiveMessage(): Promise<void> {
+    try {
+      if (!this.sessionId) return;
+
+      console.log(`\n💭 ${this.agentName} considering proactive message...`);
+
+      const session = await this.honcho.session(this.sessionId);
+      const context = await session.getContext({
+        summary: true,
+        tokens: 3000,
+      });
+
+      const contextMessages = context.toOpenAI(this.agentName);
+      const recentContext = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
+
+      // Decide if agent should proactively say something
+      const decision = await this.callOpenRouter([
+        {
+          role: "user",
+          content: `You are ${this.agentName} in a group chat. The conversation has been quiet for a while.
+
+Recent conversation context:
+${recentContext}
+
+Should you say something to keep things interesting? Consider:
+- Is there an interesting topic you want to explore?
+- Can you ask a question to get others talking?
+- Is there something on your mind based on recent discussions?
+- Would your contribution add value or just be noise?
+
+Respond with JSON:
+{
+  "should_speak": true or false,
+  "reason": "brief explanation",
+  "confidence": 0.0 to 1.0
+}
+
+JSON response:`,
+        },
+      ], { temperature: 0.4, max_tokens: 100, format: "json" });
+
+      const parsed = JSON.parse(decision);
+      console.log(`🤔 Decision: ${parsed.should_speak ? "Yes" : "No"} - ${parsed.reason}`);
+
+      if (parsed.should_speak && parsed.confidence > 0.6) {
+        await this.generateProactiveMessage(recentContext);
+      }
+    } catch (error) {
+      console.error("Error in autonomous behavior:", error);
+    }
+  }
+
+  private async generateProactiveMessage(recentContext: string): Promise<void> {
+    try {
+      const messages = [
+        {
+          role: "system",
+          content: this.systemPrompt,
+        },
+        {
+          role: "user",
+          content: `Recent conversation context:
+${recentContext}
+
+Things have been quiet. Share a thought, ask a question, or start a discussion that fits your personality and would be interesting to others.
+
+Keep it natural and conversational!`,
+        },
+      ];
+
+      const response = await this.callOpenRouter(messages, {
+        temperature: this.temperature,
+        max_tokens: this.responseLength + 50,
+      });
+
+      if (response && response.trim()) {
+        console.log(`💬 ${this.agentName} speaks proactively: ${response.trim().substring(0, 50)}...`);
+
+        this.socket!.emit("chat", {
+          content: response.trim(),
+          metadata: {
+            autonomous: true,
+            proactive: true
+          }
+        });
+
+        // Save to Honcho
+        const session = await this.honcho.session(this.sessionId || "");
+        const peer = await this.honcho.peer(this.agentName);
+        await session.addMessages([
+          peer.message(response.trim(), {
+            metadata: {
+              message_type: "agent_proactive",
+              autonomous: true
+            }
+          })
+        ]);
+
+        this.lastMessageTime = Date.now();
+      }
+    } catch (error) {
+      console.error("Error generating proactive message:", error);
+    }
   }
 
   private async processMessage(message: Message): Promise<void> {
