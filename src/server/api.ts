@@ -65,10 +65,21 @@ export function createAPIRoutes(
       return c.json({ valid: false, error: 'Username is required' }, 400);
     }
 
-    const sanitized = sanitizeUsername(username);
-
-    // Check format - validate ORIGINAL username, not sanitized
+    // Check format - validate ORIGINAL username
     if (!isValidUsername(username)) {
+      const sanitized = sanitizeUsername(username);
+
+      // Check if sanitized version is available
+      const sanitizedTaken = Array.from(connectedUsers.values()).find(u => u.username === sanitized) ||
+                            Array.from(agents.values()).find(a => a.username === sanitized);
+
+      if (sanitizedTaken) {
+        return c.json({
+          valid: false,
+          error: 'Username contains invalid characters and suggested alternative is taken'
+        });
+      }
+
       return c.json({
         valid: false,
         error: 'Username can only contain letters, numbers, underscores, and hyphens',
@@ -83,31 +94,30 @@ export function createAPIRoutes(
     if (existingUser || existingAgent) {
       return c.json({
         valid: false,
-        error: 'Username is already taken by a connected user'
+        error: 'Username is already taken'
       });
     }
 
-    // Check Honcho peers if available
+    // Check Honcho peers if available with ORIGINAL username
     if (honcho) {
       try {
         const peersPage = await honcho.getPeers();
         const peers = peersPage.items;
-        const peerExists = peers.some(p => p.id === sanitized);
+        const peerExists = peers.some(p => p.id === username);
 
         return c.json({
           valid: true,
-          sanitized,
           peerExists,
           message: peerExists ? 'Welcome back!' : 'New user'
         });
       } catch (error) {
         console.error('Error checking Honcho peers:', error);
         // Allow connection even if Honcho check fails
-        return c.json({ valid: true, sanitized });
+        return c.json({ valid: true });
       }
     }
 
-    return c.json({ valid: true, sanitized });
+    return c.json({ valid: true });
   });
 
   app.get("/api/context", async (c) => {

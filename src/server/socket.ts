@@ -5,14 +5,6 @@ import type { Message, User, Agent } from "../types.js";
 import { MessageType } from "../types.js";
 import { generateId, print } from "./utils.js";
 
-// Sanitize username to be Honcho-compatible
-function sanitizeUsername(username: string): string {
-  return username
-    .replace(/\s+/g, '_')
-    .replace(/[^a-zA-Z0-9_-]/g, '')
-    .substring(0, 50);
-}
-
 export function setupSocketIO(
   io: SocketIOServer,
   connectedUsers: Map<string, User>,
@@ -26,7 +18,6 @@ export function setupSocketIO(
 
     socket.on("register", async (data: { username: string; type?: string; capabilities?: string[] }) => {
       const { username, type = "human" } = data;
-      const honchoUsername = sanitizeUsername(username);
 
       if (type === "agent") {
         const agent: Agent = {
@@ -37,11 +28,11 @@ export function setupSocketIO(
           socket,
         };
         agents.set(socket.id, agent);
-        const agent_peer = await honcho.peer(honchoUsername, { config: { observe_me: false } });
+        const agent_peer = await honcho.peer(username, { config: { observe_me: false } });
         await session.addPeers([[agent_peer, new SessionPeerConfig(false, true)]]);
-        print(`agent registered: ${username} (honcho: ${honchoUsername})`, "green");
+        print(`agent registered: ${username}`, "green");
       } else {
-        const user_peer = await honcho.peer(honchoUsername);
+        const user_peer = await honcho.peer(username);
         // get the user's existing config if it exists
         const config = await user_peer.getPeerConfig() as Record<string, boolean>;
         const user: User = {
@@ -52,7 +43,7 @@ export function setupSocketIO(
           observe_me: config.observe_me || true,
         };
         await session.addPeers([user_peer]);
-        print(`user registered: ${username} (honcho: ${honchoUsername})`, "green");
+        print(`user registered: ${username}`, "green");
         connectedUsers.set(socket.id, user);
       }
 
@@ -253,12 +244,11 @@ export function setupSocketIO(
 // Helper functions
 async function broadcastMessage(message: Message, io: SocketIOServer, honcho: Honcho, session: any): Promise<void> {
   io.emit("message", message);
-  
+
   // Only add messages to Honcho for chat messages from real users/agents
   if (message.type === MessageType.CHAT && message.content) {
     try {
-      const honchoUsername = sanitizeUsername(message.username);
-      const peer = await honcho.peer(honchoUsername);
+      const peer = await honcho.peer(message.username);
       await session.addMessages([peer.message(message.content)]);
     } catch (error) {
       console.error(`Failed to add message to Honcho session: ${error}`);
