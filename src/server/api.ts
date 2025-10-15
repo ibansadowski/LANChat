@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Honcho } from "@honcho-ai/sdk";
 import type { Message, User, Agent } from "../types.js";
 import { getLocalIPs } from "./utils.js";
+import { rateLimit } from "./rate-limiter.js";
 
 // Sanitize username to be Honcho-compatible
 function sanitizeUsername(username: string): string {
@@ -16,6 +17,24 @@ function isValidUsername(username: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(username) && username.length > 0 && username.length <= 50;
 }
 
+// Simple authentication middleware for sensitive endpoints
+function authMiddleware() {
+  return async (c: any, next: any) => {
+    const authHeader = c.req.header("authorization");
+    const apiKey = process.env.API_KEY;
+
+    // If API_KEY is set in environment, require it for sensitive endpoints
+    if (apiKey) {
+      if (!authHeader || authHeader !== `Bearer ${apiKey}`) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    }
+    // If no API_KEY is set, allow access (backward compatibility)
+    // Consider logging a warning in production
+    return next();
+  };
+}
+
 export function createAPIRoutes(
   connectedUsers: Map<string, User>,
   agents: Map<string, Agent>,
@@ -25,6 +44,10 @@ export function createAPIRoutes(
 ) {
   const app = new Hono();
 
+  // Apply rate limiting to all routes
+  app.use("/api/*", rateLimit({ windowMs: 60000, max: 60 }));
+
+  // Public endpoint with rate limiting
   app.get("/api/stats", (c) => {
     return c.json({
       connectedUsers: connectedUsers.size,
@@ -34,7 +57,8 @@ export function createAPIRoutes(
     });
   });
 
-  app.get("/api/history", (c) => {
+  // Protected endpoint - requires auth if API_KEY is set
+  app.get("/api/history", authMiddleware(), (c) => {
     const limit = parseInt(c.req.query("limit") || "50");
     return c.json({
       messages: chatHistory.slice(-limit),
@@ -120,7 +144,8 @@ export function createAPIRoutes(
     return c.json({ valid: true });
   });
 
-  app.get("/api/context", async (c) => {
+  // Protected endpoint - exposes all Honcho peers
+  app.get("/api/context", authMiddleware(), async (c) => {
     if (!honcho) {
       return c.json({ error: "Honcho not available" }, 500);
     }
