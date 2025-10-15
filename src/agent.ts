@@ -70,8 +70,11 @@ ${autonomousMode ? "\n\nYou are autonomous and proactive - feel free to initiate
 
   // Helper to get cached session
   protected async getSession(): Promise<any> {
-    if (!this.sessionCache && this.sessionId) {
-      this.sessionCache = await this.retryApiCall(() => this.honcho.session(this.sessionId || ""));
+    if (!this.sessionId) {
+      throw new Error(`Cannot get session: sessionId is not set for agent ${this.agentName}`);
+    }
+    if (!this.sessionCache) {
+      this.sessionCache = await this.retryApiCall(() => this.honcho.session(this.sessionId!));
     }
     return this.sessionCache;
   }
@@ -262,6 +265,11 @@ JSON response:`,
   }
 
   private async generateProactiveMessage(recentContext: string): Promise<void> {
+    if (!this.sessionId) {
+      console.log(`⏸️  Cannot generate proactive message - session not initialized for ${this.agentName}`);
+      return;
+    }
+
     try {
       const messages = [
         {
@@ -315,6 +323,11 @@ Keep it natural and conversational!`,
   }
 
   private async processMessage(message: Message): Promise<void> {
+    if (!this.sessionId) {
+      console.log(`⏸️  Skipping message - session not initialized yet for ${this.agentName}`);
+      return;
+    }
+
     const decisionLog: any[] = [];
 
     const session = await this.getSession();
