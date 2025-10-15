@@ -6,5 +6,7 @@
   "assets": {
     "binding": "ASSETS",
     "directory": ".svelte-kit/cloudflare"
-  }
+  },
+  "vars": {
+    "VITE_BACKEND_URL": "https://api.ibansadowski.com"
 }
