@@ -6,15 +6,5 @@
   "assets": {
     "binding": "ASSETS",
     "directory": ".svelte-kit/cloudflare"
-  },
-  "routes": [
-    {
-      "pattern": "ibansadowski.com/*",
-      "zone_name": "ibansadowski.com"
-    },
-    {
-      "pattern": "www.ibansadowski.com/*", 
-      "zone_name": "ibansadowski.com"
-    }
-  ]
+  }
 }
