@@ -42,6 +42,10 @@ class ChatAgent {
   protected autonomousMode: boolean = true;
   protected autonomousInterval: number = 30000; // 30 seconds
 
+  // Caching to reduce API calls
+  protected sessionCache: any = null;
+  protected peerCache: Map<string, any> = new Map();
+
   constructor(agentName: string, systemPrompt?: string, autonomousMode: boolean = true) {
     this.agentName = agentName;
     this.autonomousMode = autonomousMode;
@@ -62,6 +66,48 @@ Respond naturally and conversationally. Keep responses concise.
 Feel empowered to be chatty and ask follow-up questions.
 ${autonomousMode ? "\n\nYou are autonomous and proactive - feel free to initiate conversations, share thoughts, and keep things lively!" : ""}
 `;
+  }
+
+  // Helper to get cached session
+  protected async getSession(): Promise<any> {
+    if (!this.sessionCache && this.sessionId) {
+      this.sessionCache = await this.retryApiCall(() => this.honcho.session(this.sessionId || ""));
+    }
+    return this.sessionCache;
+  }
+
+  // Helper to get cached peer
+  protected async getPeer(username: string): Promise<any> {
+    if (!this.peerCache.has(username)) {
+      const peer = await this.retryApiCall(() => this.honcho.peer(username));
+      this.peerCache.set(username, peer);
+    }
+    return this.peerCache.get(username);
+  }
+
+  // Retry logic for API calls with exponential backoff
+  protected async retryApiCall<T>(fn: () => Promise<T>): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error: any) {
+        lastError = error;
+
+        // Only retry on 429 rate limit errors
+        if (error?.status === 429 && attempt < this.maxRetries) {
+          const delay = this.retryDelay * Math.pow(2, attempt);
+          console.log(`⏱️  Rate limited. Retry ${attempt + 1}/${this.maxRetries} after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else if (error?.status !== 429) {
+          // Non-retryable error, throw immediately
+          throw error;
+        }
+      }
+    }
+
+    throw lastError;
   }
 
   // Helper method to call OpenRouter API
@@ -169,11 +215,11 @@ ${autonomousMode ? "\n\nYou are autonomous and proactive - feel free to initiate
 
       console.log(`\n💭 ${this.agentName} considering proactive message...`);
 
-      const session = await this.honcho.session(this.sessionId);
-      const context = await session.getContext({
+      const session = await this.getSession();
+      const context = await this.retryApiCall(() => session.getContext({
         summary: true,
         tokens: 3000,
-      });
+      }));
 
       const contextMessages = context.toOpenAI(this.agentName);
       const recentContext = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
@@ -250,16 +296,16 @@ Keep it natural and conversational!`,
         });
 
         // Save to Honcho
-        const session = await this.honcho.session(this.sessionId || "");
-        const peer = await this.honcho.peer(this.agentName);
-        await session.addMessages([
+        const session = await this.getSession();
+        const peer = await this.getPeer(this.agentName);
+        await this.retryApiCall(() => session.addMessages([
           peer.message(response.trim(), {
             metadata: {
               message_type: "agent_proactive",
               autonomous: true
             }
           })
-        ]);
+        ]));
 
         this.lastMessageTime = Date.now();
       }
@@ -271,34 +317,19 @@ Keep it natural and conversational!`,
   private async processMessage(message: Message): Promise<void> {
     const decisionLog: any[] = [];
 
-    console.log(`\n📡 API: Getting session ${this.sessionId}`);
-    const session = await this.honcho.session(this.sessionId || "");
+    const session = await this.getSession();
 
-    console.log(`📡 API: Getting peer ${message.username}`);
-    const senderPeer = await this.honcho.peer(message.username);
-
-    // Build context
+    // Build context (server already added the message to Honcho, no need to duplicate)
     console.log(`📡 API: Getting context (tokens: 5000, peer: ${message.username})`);
-    const context = await session.getContext({
+    const context = await this.retryApiCall(() => session.getContext({
       summary: true,
       tokens: 5000,
       lastUserMessage: message.content,
       peerTarget: message.username,
-    });
+    }));
     const contextMessages = context.toOpenAI(this.agentName);
     const recentContext: string = contextMessages.map((msg: any) => `${msg.role}: ${msg.content}`).join("\n");
     console.log(`📦 Context (${contextMessages.length} messages):\n${recentContext.substring(0, 300)}...`);
-
-    // add message to honcho with metadata
-    console.log(`📡 API: Adding message from ${message.username} to Honcho`);
-    await session.addMessages([
-      senderPeer.message(message.content, {
-        metadata: {
-          message_type: "user_message",
-          processed_by: this.agentName
-        }
-      })
-    ]);
 
     // State 1: Decide if we should respond
     const decision = await this.shouldRespond(message, recentContext);
@@ -489,8 +520,8 @@ JSON response:`,
       const search = JSON.parse(responseText) as Search;
 
       console.log(`📡 API: Semantic search query: "${search.query}"`);
-      const session = await this.honcho.session(this.sessionId || "");
-      const semanticResponse = await session.search(search.query);
+      const session = await this.getSession();
+      const semanticResponse = await this.retryApiCall(() => session.search(search.query));
       console.log(`📦 Search results: ${JSON.stringify(semanticResponse).substring(0, 200)}...`);
 
       return semanticResponse;
@@ -529,11 +560,11 @@ JSON response:`,
       const dialectic = JSON.parse(responseText) as Dialectic;
 
       console.log(`📡 API: Dialectic query - asking about ${dialectic.target}: "${dialectic.question}"`);
-      const peer = await this.honcho.peer(this.agentName);
-      const dialecticResponse = await peer.chat(dialectic.question, {
+      const peer = await this.getPeer(this.agentName);
+      const dialecticResponse = await this.retryApiCall(() => peer.chat(dialectic.question, {
         sessionId: this.sessionId || undefined,
         target: dialectic.target,
-      });
+      }));
       console.log(`📦 Dialectic response: ${dialecticResponse}`);
       return dialecticResponse;
     } catch (error) {
@@ -594,9 +625,9 @@ Please respond naturally as ${this.agentName}.`,
         }
       });
       // save our own message to honcho with rich metadata
-      const session = await this.honcho.session(this.sessionId || "");
-      const peer = await this.honcho.peer(this.agentName);
-      await session.addMessages([
+      const session = await this.getSession();
+      const peer = await this.getPeer(this.agentName);
+      await this.retryApiCall(() => session.addMessages([
         peer.message(responseContent.trim(), {
           metadata: {
             message_type: "agent_response",
@@ -607,7 +638,7 @@ Please respond naturally as ${this.agentName}.`,
             response_to_user: message.username
           }
         })
-      ]);
+      ]));
     } catch (error) {
       console.error("Error generating response:", error);
     }

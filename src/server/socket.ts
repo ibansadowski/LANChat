@@ -243,6 +243,31 @@ export function setupSocketIO(
   });
 }
 
+// Helper: retry API calls with exponential backoff for rate limiting
+async function retryApiCall<T>(fn: () => Promise<T>, maxRetries: number = 3, baseDelay: number = 1000): Promise<T> {
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      // Only retry on 429 rate limit errors
+      if (error?.message?.includes("429") && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        print(`⏱️  Rate limited. Retry ${attempt + 1}/${maxRetries} after ${delay}ms`, "yellow");
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else if (!error?.message?.includes("429")) {
+        // Non-retryable error, throw immediately
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 // Helper functions
 async function broadcastMessage(message: Message, io: SocketIOServer, honcho: Honcho, session: any): Promise<void> {
   io.emit("message", message);
@@ -250,10 +275,12 @@ async function broadcastMessage(message: Message, io: SocketIOServer, honcho: Ho
   // Only add messages to Honcho for chat messages from real users/agents
   if (message.type === MessageType.CHAT && message.content) {
     try {
-      const peer = await honcho.peer(message.username);
-      await session.addMessages([peer.message(message.content)]);
+      await retryApiCall(async () => {
+        const peer = await honcho.peer(message.username);
+        await session.addMessages([peer.message(message.content)]);
+      });
     } catch (error) {
-      console.error(`Failed to add message to Honcho session: ${error}`);
+      console.error(`Failed to add message to Honcho session after retries: ${error}`);
       // Continue even if Honcho fails - don't break the chat
     }
   }
