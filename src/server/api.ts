@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Honcho } from "@honcho-ai/sdk";
 import type { Message, User, Agent } from "../types.js";
 import { getLocalIPs } from "./utils.js";
@@ -43,6 +44,21 @@ export function createAPIRoutes(
   honcho?: Honcho
 ) {
   const app = new Hono();
+
+  // Apply CORS to all routes
+  const allowedOrigins = [
+    "https://lanchat.ibansadowski.com",
+    "https://www.lanchat.ibansadowski.com",
+    "http://localhost:5173",
+    "http://localhost:4173",
+  ];
+
+  app.use("/api/*", cors({
+    origin: allowedOrigins,
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }));
 
   // Apply rate limiting to all routes
   app.use("/api/*", rateLimit({ windowMs: 60000, max: 60 }));
