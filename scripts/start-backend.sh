@@ -1,7 +1,16 @@
 #!/bin/bash
 
-# Start LANChat backend with PM2
+# Start LANChat backend with PM2 under lanchat user
 set -e
+
+LANCHAT_USER="lanchat"
+LANCHAT_HOME="/home/${LANCHAT_USER}/LANChat"
+
+# If running as root, switch to lanchat user
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Running as root, switching to ${LANCHAT_USER} user..."
+    exec sudo -u ${LANCHAT_USER} bash "$0" "$@"
+fi
 
 cd "$(dirname "$0")/.."
 
@@ -38,5 +47,5 @@ pm2 status
 echo ""
 echo "Backend started successfully!"
 echo "View logs: pm2 logs lanchat"
-echo "Stop: pm2 stop lanchat"
-echo "Restart: pm2 restart lanchat"
+echo "Stop: sudo -u ${LANCHAT_USER} pm2 stop lanchat"
+echo "Restart: sudo -u ${LANCHAT_USER} pm2 restart lanchat"
