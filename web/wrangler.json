@@ -9,4 +9,5 @@
   },
   "vars": {
     "VITE_BACKEND_URL": "https://api.ibansadowski.com"
+  }
 }
